@@ -13,8 +13,8 @@ You are a technical documentation specialist for the RoboCup Symbolic-AI group p
 - The project deliberately rejects Floyd's CBR (case-based reasoning) approach. When summarizing the Floyd PDFs, frame them as the **benchmark domain**, not the technique we use.
 
 ## First action — every dispatch
-1. Read `/Users/book/Documents/proj/robocup/plan/project-partition.md` — your task's Acceptance criteria are there.
-2. Read `/Users/book/Documents/proj/robocup/robocup.pl` if it exists, to harvest exact line numbers and predicate names for code references.
+1. Read `plan/project-partition.md` — your task's Acceptance criteria are there.
+2. Read `robocup.pl` if it exists, to harvest exact line numbers and predicate names for code references.
 3. Read existing `docs/design/*.md` if any (the architect's notes — your tables can quote them).
 
 ## Output discipline by task

@@ -12,7 +12,7 @@
 
 **Outcome expected**: A working `swipl` program where `?- run_simulation(N).` runs `N` rounds between two 3-player teams with role-based behavior, stamina, possession, goal detection, scoring, position reset, and pauses — with the code organized around three named Symbolic-AI techniques so the report rationale writes itself.
 
-**Guiding philosophy** (from `plan/claude_prompt.txt`): simplest correct solution, fastest path to a clean submission, straightforward Prolog that students can explain, readability over elegance, course-relevant symbolic AI concepts over advanced engineering. Actively avoid AI-generated overdesign.
+**Guiding philosophy** (from `plan/brief.md`): simplest correct solution, fastest path to a clean submission, straightforward Prolog that students can explain, readability over elegance, course-relevant symbolic AI concepts over advanced engineering. Actively avoid AI-generated overdesign.
 
 ---
 
@@ -69,7 +69,7 @@ These were previously locked silently. Re-opened so the team can ratify before c
 
 | # | Decision | Option A | Option B | Recommendation | Reason |
 |---|---|---|---|---|---|
-| D1 | Starting point | Full rewrite of `robocup.pl` | Refactor existing `project` file | **A** (full rewrite) | Existing file is partial, coherence > reuse given 56h |
+| D1 | Starting point | Full rewrite of `robocup.pl` | Refactor existing `docs/prior-attempt.pl` | **A** (full rewrite) | Existing file is partial, coherence > reuse given 56h |
 | D2 | Symbolic techniques | FSM + STRIPS + CSP (3 techniques) | FSM + STRIPS only (drop CSP; use fixed positions) | **A** (3 techniques) | CSP is cheap if kept tiny; one more rubric hit |
 | D3 | CSP implementation | `clpfd` with `labeling/2` | Hard-coded fixed positions | **A**, with **B as fallback** if clpfd debugging > 1h | clpfd makes the report stronger; fallback protects the deadline |
 | D4 | Turn order | Alternating (`team1 → team2`) | Randomized (`random_member/2`) | **A** (alternating) | Deterministic → easier viva, easier tests |
@@ -107,7 +107,7 @@ Single file `robocup.pl` organized in clearly labeled sections so parallel subag
 │   field/1, goal_position/2, kick_range/1, catch_range/1 │
 ├─────────────────────────────────────────────────────────┤
 │ Section 2. Dynamic world model (assert/retract)         │
-│   ball/1, player/4, score/2, possession/1, turn/1       │
+│   ball/1, player/4, score/2, possession/2, turn/1       │
 ├─────────────────────────────────────────────────────────┤
 │ Section 3. CSP layer — initial formation                │
 │   place_teams/0 with zone + spacing constraints         │
@@ -143,21 +143,23 @@ Single file `robocup.pl` organized in clearly labeled sections so parallel subag
 
 ## Critical files
 
-- `/Users/book/Documents/proj/robocup/robocup.pl` — **the submission** (to be created)
-- `/Users/book/Documents/proj/robocup/docs/project-context.md` — **single source of truth** for subagents (created first, kept short)
-- `/Users/book/Documents/proj/robocup/docs/report-outline.md` — report skeleton for humans to flesh out
-- `/Users/book/Documents/proj/robocup/docs/viva_answers.md` — pre-drafted Q&A bank
-- `/Users/book/Documents/proj/robocup/docs/floyd-2008-summary.md` — 1-page MD summary of Floyd 2008 for team reference
-- `/Users/book/Documents/proj/robocup/docs/floyd-2012-summary.md` — 1-page MD summary of Floyd 2012
-- `/Users/book/Documents/proj/robocup/docs/viva_explanations.md` — post-implementation walkthrough (NICE-TO-HAVE)
-- `/Users/book/Documents/proj/robocup/README.md` — how to run: `swipl -s robocup.pl` then `?- run_simulation(10).`
-- `/Users/book/Documents/proj/robocup/tests/test_robocup.pl` — PLUnit test harness
+All paths repo-relative (team has mixed Mac/Windows members).
+
+- `robocup.pl` — **the submission** (to be created)
+- `docs/project-context.md` — **single source of truth** for subagents (created first, kept short)
+- `docs/report-outline.md` — report skeleton for humans to flesh out
+- `docs/viva_answers.md` — pre-drafted Q&A bank (or appendix of `docs/report-outline.md` — see §Phase 7)
+- `docs/floyd-2008-summary.md` — 1-page MD summary of Floyd 2008 for team reference
+- `docs/floyd-2012-summary.md` — 1-page MD summary of Floyd 2012
+- `docs/viva_explanations.md` — post-implementation walkthrough (NICE-TO-HAVE)
+- `README.md` — how to run: `swipl -s robocup.pl` then `?- run_simulation(10).`
+- `tests/test_robocup.pl` — PLUnit test harness
 
 **Reference only** (don't edit, read for context):
-- `/Users/book/Documents/proj/robocup/project` — partial earlier attempt
-- `/Users/book/Documents/proj/robocup/memory/context.md` — partial report draft
-- `/Users/book/Documents/proj/robocup/project-requirements/Symbolic_AI_group_project.pdf` — rubric
-- `/Users/book/Documents/proj/robocup/project-requirements/materials/Michael_Floyd_RoboCup_*.pdf` — background
+- `docs/prior-attempt.pl` — partial earlier Prolog attempt
+- `docs/report-notes-raw.md` — partial report draft (feeds T7.1)
+- `project-requirements/Symbolic_AI_group_project.pdf` — rubric
+- `project-requirements/materials/Michael_Floyd_RoboCup_*.pdf` — background
 
 ---
 
@@ -203,13 +205,12 @@ Tasks are self-contained (each includes the file path, what-to-change, and accep
   - goalkeepers within own penalty zone,
   - defenders in own half,
   - forwards past own team's midline (i.e. near opposing half),
-  - pairwise Manhattan distance ≥ 15 within a team,
-  - cross-team: no player on the center spot (50,25),
+  - pairwise Manhattan distance ≥ 10 within a team (loose enough to guarantee solution on 100×50),
   - all within field bounds.
 - Labeling: `labeling([ff], Vars)` — pick first solution; document the heuristic choice in the section header comment.
 - Export: `setup_world/0` that retracts all dynamic facts, asserts ball at (50,25), calls `place_teams/0`, sets `score(team1,0)`, `score(team2,0)`, `possession(none,none)`, `turn(team1)`, and `current_state(Team,Role,InitialState)` for all 6 player-role slots.
-- Acceptance: `?- setup_world.` is deterministic and `?- findall(P, player(team1,_,P,_), Ps).` returns 3 positions satisfying the constraints above. Report-ready: the CSP is described as "domain = field cells; constraints = role-zones + min spacing + center-spot exclusion; labeling = first-fail".
-- **Fallback (D3)**: if clpfd debugging exceeds 1h, swap to hard-coded positions: `player(team1, goalkeeper, pos(5,25), 4000).` etc. Note the fallback in `docs/viva_answers.md`.
+- Acceptance: `?- setup_world.` is deterministic and `?- findall(P, player(team1,_,P,_), Ps).` returns 3 positions satisfying the constraints above. Report-ready: the CSP is described as "domain = field cells; constraints = role-zones + min spacing; labeling = first-fail".
+- **Fallback (D3)**: if clpfd debugging exceeds **30 minutes**, swap to hard-coded positions: `player(team1, goalkeeper, pos(5,25), 4000).` etc. Note the fallback in `docs/viva_answers.md`.
 
 ### Phase 2 — Symbolic engines (after Phase 1, can parallelize, ~4 hours)
 
@@ -227,7 +228,7 @@ Tasks are self-contained (each includes the file path, what-to-change, and accep
 - File: `robocup.pl`, Section 5. **Showcase: STRIPS** (schema only — no planner, actions are selected per-tick by FSM).
 - Representation: `action(Name, Actor, Preconds, Effects)` where Preconds/Effects are lists of world-literals (`at(Actor,Pos)`, `ball_at(Pos)`, `possesses(Actor)`, `stamina_ge(Actor,N)`).
 - Four actions: `move_step(Actor, Dir)`, `kick(Actor, TargetPos)`, `catch(Actor)`, `pass(Actor, Teammate)`.
-- Meta-predicates: `applicable(Action, World)`, `apply_effects(Action)` (asserts/retracts to mutate dynamic facts), `do_action(Action)` = applicable + apply + log.
+- Meta-predicates: `applicable(Action)` (reads global dynamic world state), `apply_effects(Action)` (asserts/retracts to mutate dynamic facts), `do_action(Action)` = applicable + apply + log.
 - Preconditions for `kick` and `pass` check `has_possession(Actor)`; `catch` sets possession; `move_step` while in possession moves the ball with the carrier.
 - Acceptance: `?- do_action(kick(player(team1,forward), position(60,25))).` succeeds only when preconditions hold and correctly updates ball + stamina. Scripted test: `kick` fails when actor lacks possession. Report-ready: a preconditions/effects table for each action.
 
@@ -299,7 +300,7 @@ Shared acceptance: each predicate is `nondet`-free, logs one `format/2` line per
 
 **T7.0 — Viva answer bank** ⇢ can run parallel with T7.1
 - File: `docs/viva_answers.md`. One row per question, 2–4 short bullet answers in plain student language (NOT polished prose).
-- Required questions (from `plan/claude_prompt.txt`):
+- Required questions (from `plan/brief.md`):
   1. Why represent players/ball with `player/4` + `ball/1`?
   2. Why use dynamic predicates (assert/retract)?
   3. Why FSM for role behavior?
@@ -402,7 +403,9 @@ $ swipl -s robocup.pl
 
 | Risk | Likelihood | Impact | Mitigation / fallback |
 |---|---|---|---|
-| `clpfd` constraints take > 1h to debug | Medium | Delays Phase 2 | **D3 fallback**: swap `place_teams/0` for hard-coded positions; keep the report section but reframe as "fixed initial formation; CSP was attempted and is documented below." |
+| `clpfd` constraints take > 30 min to debug | Medium | Delays Phase 2 | **D3 fallback**: swap `place_teams/0` for hard-coded positions; keep the report section but reframe as "fixed initial formation; CSP was attempted and is documented below." |
+| CSP infeasibility (constraints too tight for field size) | Low | CSP returns no solution → setup_world fails | **R9**: loosen pairwise Manhattan distance to ≥ 10 (already applied in T1.2); drop center-spot exclusion; last resort = D3 fallback. |
+| Cross-platform path breakage in subagent prompts | Resolved | Would block Windows team member | **R10**: `.claude/agents/*.md` now use relative paths (not `/Users/book/...`). Duplicate `agents/` at repo root removed; `.claude/agents/` is the single source. |
 | Merge conflicts in `robocup.pl` during Phase 4 | Medium | Delays Phase 5 | Worktrees per task; P4 merges at every phase boundary with smoke test before moving on. |
 | `run_simulation(10)` finishes 0–0 in the demo | High (default) | Weakens viva | Scripted opening (T6.1 scenario 5) guarantees ≥1 goal; always demo via the scripted opening, not `setup_world` + `run_simulation(10)`. |
 | Team member blocked on a section they own | Medium | Stalls a phase | Subagent dispatches the task; owner reviews instead of writes. Reassign via P4 if needed. |
