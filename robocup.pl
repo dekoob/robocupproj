@@ -482,7 +482,7 @@ apply_effects(kick(player(T, R), TargetPos)) :-
     stamina_cost_kick(C),
     NewS is S - C,
     assertz(player(T, R, Pos, NewS)),
-    % Kick shortfall: ball may land 0-10 units short of the intended target.
+    % Kick shortfall: ball may land 0-3 units short of the intended target.
     Pos = position(Px, Py),
     TargetPos = position(Tx, Ty),
     Dx is Tx - Px, Dy is Ty - Py,
@@ -523,7 +523,7 @@ apply_effects(collect(player(T, R))) :-
 
 % apply_effects(tackle(Tackler, Opponent)) — roll for tackle success.
 %   Success (tackle_success_rate%): Tackler gains possession; ball snaps to Tackler.
-%   Failure: possession cleared to none-none; ball left at Opponent's position (loose).
+%   Failure: opponent retains possession — world unchanged.
 apply_effects(tackle(player(T, R), player(_OppT, _OppR))) :-
     player(T, R, TPos, _),
     random_between(1, 100, Roll),
@@ -884,7 +884,7 @@ print_state :-
         member(Team-Role, [team1-goalkeeper, team1-defender, team1-forward,
                            team2-goalkeeper, team2-defender, team2-forward]),
         (   player(Team, Role, Pos, St)
-        ->  format("  ~w-~w\t~w\tst=~w~n", [Team, Role, Pos, St])
+        ->  format("  ~w-~w~t~22|~w\tst=~w~n", [Team, Role, Pos, St])
         ;   true
         )
     ).

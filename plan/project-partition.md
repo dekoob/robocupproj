@@ -193,7 +193,7 @@ Tasks are self-contained (each includes the file path, what-to-change, and accep
 
 **T1.1 — Static facts + sensor helpers (Section 1)** ⇢ sequential (blocks CSP)
 - File: `robocup.pl`, Section 1.
-- Content: `field(size(100,50))`, `goal_position(team1, rect(0,20,0,30))`, `goal_position(team2, rect(100,20,100,30))`, `kick_range(10)`, `catch_range(2)`, `move_step(1)`, `stamina_init(4000)`, `stamina_cost_move(10)`, `stamina_cost_kick(20)`.
+- Content: `field(size(100,50))`, `goal_position(team1, rect(0,20,0,30))`, `goal_position(team2, rect(100,20,100,30))`, `kick_range(50)`, `catch_range(3)`, `move_step(5)`, `stamina_init(100)`, `stamina_cost_move(5)`, `stamina_cost_kick(10)`.
 - Sensor helpers (also Section 1): `ball_close/2`, `in_kick_range/2`, `in_catch_range/2`, `ball_in_own_half/1`, `has_possession/2`, `can_shoot/1`, `can_pass/2`. These read `player/4`, `ball/1`, `possession/2` — no mutation.
 - Acceptance: `?- field(F), kick_range(K).` returns bindings. `?- has_possession/2` defined even if nothing currently holds possession.
 

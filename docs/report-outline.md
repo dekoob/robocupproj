@@ -38,8 +38,8 @@
 ### 2.1 Static knowledge base — Section 1 of robocup.pl
 - field(size(100, 50)) — robocup.pl:23 — single fact encodes field dimensions; read by in_field/1 (robocup.pl:339) and CSP domain bounds
 - goal_position(team1, rect(0,20,0,30)), goal_position(team2, rect(100,20,100,30)) — robocup.pl:26-27 — goal rectangles used by check_goal/0 for scoring detection
-- kick_range(50), catch_range(2), move_step(1) — robocup.pl:30-35 — action radii; referenced by FSM sensor helpers and STRIPS applicable/2; kick_range(50) allows cross-field kicks and goalkeeper clearances
-- stamina_init(4000), stamina_cost_move(10), stamina_cost_kick(20) — robocup.pl:38-45 — constants; read by apply_effects/1; never mutated during a run
+- kick_range(50), catch_range(3), move_step(5) — robocup.pl:30-35 — action radii; referenced by FSM sensor helpers and STRIPS applicable/2; kick_range(50) allows cross-field kicks and goalkeeper clearances
+- stamina_init(100), stamina_cost_move(5), stamina_cost_kick(10) — robocup.pl:38-45 — constants; read by apply_effects/1; never mutated during a run
 
 ### 2.2 Dynamic world model — Section 2 of robocup.pl
 - All mutable predicates declared centrally at robocup.pl:52-58 to avoid dependency cycles across sections

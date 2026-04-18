@@ -64,7 +64,7 @@ The test file (`tests/test_robocup.pl`) uses the PLUnit harness and covers:
 | `stamina_depletes_on_move` | One `move_step` deducts 10 stamina (4000 -> 3990) |
 | `kick_fails_without_possession` | `kick` is a no-op when actor has no possession |
 | `forward_cannot_catch` | `catch` precondition rejects non-goalkeeper roles |
-| `goalkeeper_can_catch_when_ball_adjacent` | Goalkeeper catches ball within `catch_range(2)` |
+| `goalkeeper_can_catch_when_ball_adjacent` | Goalkeeper catches ball within `catch_range(3)` |
 | `goal_left_scores_for_team2` | Ball at `(0,25)` triggers team2 goal |
 | `goal_right_scores_for_team1` | Ball at `(100,25)` triggers team1 goal |
 | `check_goal_noop_at_midfield` | No goal at `(50,25)`; world unchanged |
