@@ -26,8 +26,10 @@ field(size(100, 50)).
 goal_position(team1, rect(0, 20, 0, 30)).    % team1 goal: left edge, y in [20,30]
 goal_position(team2, rect(100, 20, 100, 30)). % team2 goal: right edge, y in [20,30]
 
-% kick_range(+R) — maximum Manhattan distance at which a player can kick the ball
-kick_range(10).
+% kick_range(+R) — maximum Manhattan distance at which a player can kick the ball.
+%   Set to 50 so a player at midfield can reach either goal, and a goalkeeper can
+%   clear the ball past the halfway line.
+kick_range(50).
 
 % catch_range(+R) — maximum Manhattan distance at which a goalkeeper can catch the ball
 catch_range(2).
@@ -230,7 +232,7 @@ transition(defender,   hold_line,       [ball_in_own_half, ball_is_loose],     i
 transition(defender,   intercept,       [has_possession],                      pass_to_forward).
 transition(defender,   pass_to_forward, [\+ has_possession],                   hold_line).
 
-transition(forward,    advance,         [\+ ball_in_own_half, \+ has_possession], chase_ball).
+transition(forward,    advance,         [ball_is_loose, \+ has_possession],      chase_ball).
 transition(forward,    chase_ball,      [can_shoot],                           shoot).
 transition(forward,    shoot,           [\+ has_possession],                   advance).
 
@@ -387,6 +389,16 @@ applicable(catch(player(T, goalkeeper)), _) :-
     ball(BPos),
     in_range(player(T, goalkeeper), BPos, catch_range).
 
+% applicable(collect(Actor), _) — non-goalkeeper picks up a loose ball that is
+%   at most 1 step away (player walked onto it or is adjacent).
+applicable(collect(player(T, R)), _) :-
+    R \= goalkeeper,
+    possession(none, none),
+    player(T, R, Pos, _),
+    ball(BPos),
+    manhattan(Pos, BPos, D),
+    D =< 1.
+
 % applicable(pass(Actor, Teammate), _) — actor has possession, teammate is on the
 %   same team with a different role, actor stamina >= cost_kick, and teammate is
 %   within kick_range.
@@ -440,6 +452,16 @@ apply_effects(catch(player(T, goalkeeper))) :-
     assertz(possession(T, goalkeeper)),
     retract(ball(_)),
     assertz(ball(GkPos)),
+    inc_metric(catches, T).
+
+% apply_effects(collect(Actor)) — non-goalkeeper secures a loose ball at their feet.
+%   Ball snaps to player's position; increments catches metric.
+apply_effects(collect(player(T, R))) :-
+    player(T, R, Pos, _),
+    retract(possession(_, _)),
+    assertz(possession(T, R)),
+    retract(ball(_)),
+    assertz(ball(Pos)),
     inc_metric(catches, T).
 
 % apply_effects(pass(Actor, Teammate)) — transfer ball and possession to teammate,
@@ -546,7 +568,14 @@ act_goalkeeper(Team) :-
         ->  ball(BallPos),
             step_toward(player(Team, goalkeeper), BallPos)
         ;   S = hold_ball
-        ->  do_action(kick(player(Team, goalkeeper), position(50, 25)))
+        ->  % Kick toward midfield as far as kick_range allows from current position.
+            player(Team, goalkeeper, position(GkX, _GkY), _),
+            kick_range(Kr),
+            (   Team = team1
+            ->  KickX is min(100, GkX + Kr), KickTarget = position(KickX, 25)
+            ;   KickX is max(0,   GkX - Kr), KickTarget = position(KickX, 25)
+            ),
+            do_action(kick(player(Team, goalkeeper), KickTarget))
         ;   true
         )
     )).
@@ -569,7 +598,12 @@ act_defender(Team) :-
             )
         ;   S = intercept
         ->  ball(BallPos),
-            step_toward(player(Team, defender), BallPos)
+            player(Team, defender, DPos, _),
+            manhattan(DPos, BallPos, DD),
+            (   DD =< 1
+            ->  do_action(collect(player(Team, defender)))
+            ;   step_toward(player(Team, defender), BallPos)
+            )
         ;   S = pass_to_forward
         ->  do_action(pass(player(Team, defender), player(Team, forward)))
         ;   true
@@ -593,8 +627,19 @@ act_forward(Team) :-
                            ; GoalCenter = position(0, 25)),
             step_toward(player(Team, forward), GoalCenter)
         ;   S = chase_ball
-        ->  ball(BallPos),
-            step_toward(player(Team, forward), BallPos)
+        ->  (   has_possession(Team, forward)
+            ->  % Ball already secured — advance toward goal to get into shooting range
+                (Team = team1 -> GoalCenter = position(100, 25)
+                               ; GoalCenter = position(0, 25)),
+                step_toward(player(Team, forward), GoalCenter)
+            ;   ball(BallPos),
+                player(Team, forward, FPos, _),
+                manhattan(FPos, BallPos, FD),
+                (   FD =< 1
+                ->  do_action(collect(player(Team, forward)))
+                ;   step_toward(player(Team, forward), BallPos)
+                )
+            )
         ;   S = shoot
         ->  (Team = team1 -> GoalCenter = position(100, 25)
                            ; GoalCenter = position(0, 25)),
@@ -642,8 +687,10 @@ check_goal :-
             inc_metric(goals, Attacker),
             format("*** GOAL! ~w scored! Score is now ~w-~w ***~n",
                    [Attacker, NewS1, NewS2]),
-            % Reset the world (zeros scores, repositions players and ball).
-            setup_world
+            % Reposition players and ball; restore accumulated scores afterward.
+            setup_world,
+            retract(score(team1, _)), assertz(score(team1, NewS1)),
+            retract(score(team2, _)), assertz(score(team2, NewS2))
         ;   true
         )
     )).

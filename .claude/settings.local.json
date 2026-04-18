@@ -62,7 +62,9 @@
       "Bash(swipl -q -s c:/Users/dimik/Workspace/robocupproj/tests/test_robocup.pl -g \"listing\\(player/4\\)\" -t halt)",
       "Bash(swipl -q -s c:/Users/dimik/Workspace/robocupproj/tests/test_robocup.pl -g \"plunit_robocup:\\(setup_world, retractall\\(player\\(team1, forward, _, _\\)\\), assertz\\(player\\(team1, forward, position\\(50, 25\\), 4000\\)\\), do_action\\(move_step\\(player\\(team1, forward\\), east\\)\\), findall\\(S,player\\(team1, forward, _, S\\), Ss\\), format\\('Ss=~w~n',[Ss]\\)\\)\" -t halt)",
       "Bash(swipl -q -s c:/Users/dimik/Workspace/robocupproj/tests/test_robocup.pl -g \"plunit_robocup:\\(setup_world, retractall\\(player\\(team1, forward, _, _\\)\\), assertz\\(player\\(team1, forward, position\\(50, 25\\), 4000\\)\\), do_action\\(move_step\\(player\\(team1, forward\\), east\\)\\)\\), findall\\(T-R-P-S, user:player\\(T,R,P,S\\), U\\), format\\('user=~w~n',[U]\\), findall\\(T-R-P-S, plunit_robocup:player\\(T,R,P,S\\), M\\), format\\('plunit=~w~n',[M]\\)\" -t halt)",
-      "Bash(swipl -q -s c:/Users/dimik/Workspace/robocupproj/tests/test_robocup.pl -g \"run_tests, halt\")"
+      "Bash(swipl -q -s c:/Users/dimik/Workspace/robocupproj/tests/test_robocup.pl -g \"run_tests, halt\")",
+      "Bash(swipl -q -s c:/Users/dimik/Workspace/robocupproj/robocup.pl -g \"run_simulation\\(15\\)\" -t halt)",
+      "Bash(swipl -q -s c:/Users/dimik/Workspace/robocupproj/robocup.pl -g \"run_simulation\\(35\\)\" -t halt)"
     ]
   }
 }
