@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(swipl -g \"consult\\('robocup.pl'\\), run_simulation\\(10\\), halt.\")",
-      "Bash(swipl -g \"consult\\('tests/test_robocup.pl'\\), run_tests, halt.\")"
+      "Bash(swipl -g \"consult\\('tests/test_robocup.pl'\\), run_tests, halt.\")",
+      "Bash(swipl -s robocup.pl -g \"run_simulation\\(10\\), halt\")",
+      "Bash(swipl -s robocup.pl -g \"run_simulation\\(20\\), halt\")",
+      "Bash(swipl -s robocup.pl -g \"run_simulation\\(50\\), halt\")"
     ]
   }
 }

@@ -20,17 +20,24 @@
 % field(+Size) — describes the playing field dimensions as size(Width, Height)
 field(size(100, 50)).
 
-% goal_position(+Team, +Rect) — rect(X1,Y1,X2,Y2) bounds of each team's goal opening
+% goal_position(+Team, +Rect) — rect(X1,Y1,X2,Y2) bounds of each team's goal opening.
+%   Goal is on the field edge (x=0 / x=100), y in [20,30] — like real football.
 goal_position(team1, rect(0, 20, 0, 30)).    % team1 goal: left edge, y in [20,30]
 goal_position(team2, rect(100, 20, 100, 30)). % team2 goal: right edge, y in [20,30]
+
+% gk_zone_depth(+D) — how far in front of the goal the goalkeeper may patrol.
+%   Analogous to a penalty/goal area. GK chases loose balls within this zone;
+%   returns to goal center if ball is outside it.
+gk_zone_depth(10).
 
 % kick_range(+R) — maximum Manhattan distance at which a player can kick the ball.
 %   Set to 50 so a player at midfield can reach either goal, and a goalkeeper can
 %   clear the ball past the halfway line.
 kick_range(50).
 
-% catch_range(+R) — maximum Manhattan distance at which a goalkeeper can catch the ball
-catch_range(2).
+% catch_range(+R) — maximum Manhattan distance at which a goalkeeper can catch the ball.
+%   Reduced to 3 so corner shots (y=20,21,29,30) can score; centre shots still saved.
+catch_range(3).
 
 % move_step(+S) — distance a player advances in one move action
 move_step(5).
@@ -44,6 +51,11 @@ stamina_cost_move(5).
 % stamina_cost_kick(+C) — stamina deducted per kick action
 stamina_cost_kick(10).
 
+% tackle_success_rate(+R) — probability (1-100) that a tackle attempt steals possession.
+%   On success the defender gains the ball; on failure the ball goes loose at the
+%   opponent's feet (contested 50/50 — both players must react next round).
+tackle_success_rate(50).
+
 % === Section 2. Dynamic world model ===
 
 % Dynamic declarations for every mutable predicate used across all sections.
@@ -53,7 +65,7 @@ stamina_cost_kick(10).
 :- dynamic player/4.        % player(Team, Role, position(X,Y), Stamina)
 :- dynamic score/2.         % score(Team, N) — current score for Team
 :- dynamic possession/2.    % possession(Team, Role) — who holds the ball; possession(none,none) = loose
-:- dynamic turn/1.          % turn(Team) — whose turn it is
+:- dynamic first_mover/1.   % first_mover(Team) — which team acts first this round
 :- dynamic current_state/3. % current_state(Team, Role, State) — FSM state per player
 :- dynamic metric/3.        % metric(kicks|catches|goals, Team, N) — counters
 
@@ -66,13 +78,14 @@ stamina_cost_kick(10).
 place_team(Team) :-
     % Select domain bounds based on which team is being placed.
     (   Team = team1
-    ->  XgkLo = 0,  XgkHi = 15,  YgkLo = 20, YgkHi = 30,
-        XdfLo = 0,  XdfHi = 50,  YdfLo = 0,  YdfHi = 50,
-        XfwLo = 50, XfwHi = 100, YfwLo = 0,  YfwHi = 50
-    ;   % team2 — X domains mirrored
-        XgkLo = 85, XgkHi = 100, YgkLo = 20, YgkHi = 30,
-        XdfLo = 50, XdfHi = 100, YdfLo = 0,  YdfHi = 50,
-        XfwLo = 0,  XfwHi = 50,  YfwLo = 0,  YfwHi = 50
+    ->  % team1 defends x=0, attacks right. All players start in own half (x<=50).
+        XgkLo = 1,  XgkHi = 15,  YgkLo = 20, YgkHi = 30,
+        XdfLo = 5,  XdfHi = 35,  YdfLo = 10, YdfHi = 40,
+        XfwLo = 40, XfwHi = 50,  YfwLo = 10, YfwHi = 40
+    ;   % team2 defends x=100, attacks left. All players start in own half (x>=50).
+        XgkLo = 85, XgkHi = 99,  YgkLo = 20, YgkHi = 30,
+        XdfLo = 65, XdfHi = 95,  YdfLo = 10, YdfHi = 40,
+        XfwLo = 50, XfwHi = 60,  YfwLo = 10, YfwHi = 40
     ),
     % Declare 6 clpfd variables — one (X,Y) pair per role.
     Xgk in XgkLo..XgkHi, Ygk in YgkLo..YgkHi,
@@ -92,13 +105,13 @@ place_team(Team) :-
     assertz(player(Team, forward,    position(Xfw, Yfw), Stamina)).
 
 % setup_world/0 — Reset all dynamic state, place both teams via CSP,
-%   seed score/possession/turn.
+%   seed score/possession/turn, then run initial kick-off for team1.
 setup_world :-
     retractall(ball(_)),
     retractall(player(_, _, _, _)),
     retractall(score(_, _)),
     retractall(possession(_, _)),
-    retractall(turn(_)),
+    retractall(first_mover(_)),
     retractall(current_state(_, _, _)),
     retractall(metric(_, _, _)),
     assertz(ball(position(50, 25))),
@@ -108,7 +121,21 @@ setup_world :-
     assertz(score(team2, 0)),
     assertz(possession(none, none)),
     init_fsm,
-    assertz(turn(team1)).
+    assertz(first_mover(team1)).
+
+% do_kickoff(+Team, +FwdStam, +DefStam) — place Team's forward at center with
+%   possession and immediately pass to the defender (mandatory kick-off pass).
+%   FwdStam/DefStam are the stamina values to assign after repositioning.
+do_kickoff(Team, FwdStam, DefStam) :-
+    retract(player(Team, forward, _, _)),
+    assertz(player(Team, forward, position(50, 25), FwdStam)),
+    (Team = team1 -> DefPos = position(45, 25) ; DefPos = position(55, 25)),
+    retract(player(Team, defender, _, _)),
+    assertz(player(Team, defender, DefPos, DefStam)),
+    retract(possession(_, _)),
+    assertz(possession(Team, forward)),
+    format("  [kick-off] ~w forward passes to defender~n", [Team]),
+    do_action(pass(player(Team, forward), player(Team, defender))).
 
 % === Section 4. FSM role state machines ===
 
@@ -212,25 +239,31 @@ can_pass(Team, Role) :-
 %                                   \+ has_possession
 %   goalkeeper    chase_ball        in_catch_range                   hold_ball
 %   goalkeeper    hold_ball         \+ has_possession                guard_goal
+%   defender      hold_line         has_possession                   pass_to_forward
 %   defender      hold_line         ball_in_own_half,                intercept
 %                                   ball_is_loose
 %   defender      intercept         has_possession                   pass_to_forward
+%   defender      intercept         \+ ball_in_own_half              hold_line
 %   defender      pass_to_forward   \+ has_possession                hold_line
-%   forward       advance           \+ ball_in_own_half,             chase_ball
+%   forward       advance           can_shoot                        shoot
+%   forward       advance           ball_is_loose,                   chase_ball
 %                                   \+ has_possession
 %   forward       chase_ball        can_shoot                        shoot
 %   forward       shoot             \+ has_possession                advance
 % ---------------------------------------------------------------------------
 
 transition(goalkeeper, guard_goal,      [ball_in_own_half, \+ has_possession], chase_ball).
-transition(goalkeeper, chase_ball,      [in_catch_range],                      hold_ball).
+transition(goalkeeper, chase_ball,      [has_possession],                      hold_ball).
 transition(goalkeeper, hold_ball,       [\+ has_possession],                   guard_goal).
 
+transition(defender,   hold_line,       [has_possession],                      pass_to_forward).
 transition(defender,   hold_line,       [ball_in_own_half, ball_is_loose],     intercept).
 transition(defender,   intercept,       [has_possession],                      pass_to_forward).
+transition(defender,   intercept,       [\+ ball_in_own_half],                 hold_line).
 transition(defender,   pass_to_forward, [\+ has_possession],                   hold_line).
 
-transition(forward,    advance,         [ball_is_loose, \+ has_possession],      chase_ball).
+transition(forward,    advance,         [can_shoot],                           shoot).
+transition(forward,    advance,         [ball_is_loose, \+ has_possession],    chase_ball).
 transition(forward,    chase_ball,      [can_shoot],                           shoot).
 transition(forward,    shoot,           [\+ has_possession],                   advance).
 
@@ -398,6 +431,18 @@ applicable(collect(player(T, R)), _) :-
     move_step(S),
     D =< S.
 
+% applicable(tackle(Tackler, Opponent), _) — Tackler and Opponent are on different
+%   teams, Opponent currently has possession, and Tackler is within one move_step
+%   of Opponent (adjacent enough to make a challenge).
+applicable(tackle(player(T, R), player(OppT, OppR)), _) :-
+    OppT \= T,
+    possession(OppT, OppR),
+    player(T, R, TPos, _),
+    player(OppT, OppR, OPos, _),
+    manhattan(TPos, OPos, Dist),
+    move_step(MS),
+    Dist =< MS.
+
 % applicable(pass(Actor, Teammate), _) — actor has possession, teammate is on the
 %   same team with a different role, actor stamina >= cost_kick, and teammate is
 %   within kick_range.
@@ -437,8 +482,21 @@ apply_effects(kick(player(T, R), TargetPos)) :-
     stamina_cost_kick(C),
     NewS is S - C,
     assertz(player(T, R, Pos, NewS)),
+    % Kick shortfall: ball may land 0-10 units short of the intended target.
+    Pos = position(Px, Py),
+    TargetPos = position(Tx, Ty),
+    Dx is Tx - Px, Dy is Ty - Py,
+    ManhDist is abs(Dx) + abs(Dy),
+    random_between(0, 3, Shortfall),
+    (   ManhDist > 0
+    ->  EffDist is max(0, ManhDist - Shortfall),
+        Ax is Px + (Dx * EffDist) // ManhDist,
+        Ay is Py + (Dy * EffDist) // ManhDist,
+        ActualPos = position(Ax, Ay)
+    ;   ActualPos = TargetPos
+    ),
     retract(ball(_)),
-    assertz(ball(TargetPos)),
+    assertz(ball(ActualPos)),
     retract(possession(_, _)),
     assertz(possession(none, none)),
     inc_metric(kicks, T).
@@ -462,6 +520,23 @@ apply_effects(collect(player(T, R))) :-
     retract(ball(_)),
     assertz(ball(Pos)),
     inc_metric(catches, T).
+
+% apply_effects(tackle(Tackler, Opponent)) — roll for tackle success.
+%   Success (tackle_success_rate%): Tackler gains possession; ball snaps to Tackler.
+%   Failure: possession cleared to none-none; ball left at Opponent's position (loose).
+apply_effects(tackle(player(T, R), player(_OppT, _OppR))) :-
+    player(T, R, TPos, _),
+    random_between(1, 100, Roll),
+    tackle_success_rate(Rate),
+    (   Roll =< Rate
+    ->  % Success: tackler steals the ball.
+        retract(possession(_, _)),
+        assertz(possession(T, R)),
+        retract(ball(_)),
+        assertz(ball(TPos)),
+        inc_metric(catches, T)
+    ;   true   % Failure: opponent keeps possession — world unchanged.
+    ).
 
 % apply_effects(pass(Actor, Teammate)) — transfer ball and possession to teammate,
 %   deduct stamina from passer; increments kicks metric for passer's team (pass = kick).
@@ -564,18 +639,23 @@ act_goalkeeper(Team) :-
             ;   true
             )
         ;   S = chase_ball
-        ->  ball(BallPos),
-            step_toward(player(Team, goalkeeper), BallPos)
+        ->  (Team = team1 -> GoalCenter = position(0, 25)
+                           ; GoalCenter = position(100, 25)),
+            ball(BallPos),
+            gk_zone_depth(ZD),
+            BallPos = position(Bx, _),
+            InZone = (Team = team1 -> Bx =< ZD ; Bx >= 100 - ZD),
+            (   in_catch_range(Team, goalkeeper), possession(none, none)
+            ->  do_action(catch(player(Team, goalkeeper)))
+            ;   possession(none, none), call(InZone)
+            ->  % Ball is loose and inside the GK patrol zone — move to intercept.
+                step_toward(player(Team, goalkeeper), BallPos)
+            ;   % Ball outside zone or not loose — return to goal center.
+                step_toward(player(Team, goalkeeper), GoalCenter)
+            )
         ;   S = hold_ball
-        ->  % Kick toward midfield as far as kick_range allows; vary y for realism.
-            player(Team, goalkeeper, position(GkX, _GkY), _),
-            kick_range(Kr),
-            random_between(15, 35, Cy),
-            (   Team = team1
-            ->  KickX is min(100, GkX + Kr), KickTarget = position(KickX, Cy)
-            ;   KickX is max(0,   GkX - Kr), KickTarget = position(KickX, Cy)
-            ),
-            do_action(kick(player(Team, goalkeeper), KickTarget))
+        ->  % Distribute to the defender — reliable short pass, keeps possession.
+            do_action(pass(player(Team, goalkeeper), player(Team, defender)))
         ;   true
         )
     )).
@@ -593,7 +673,15 @@ act_defender(Team) :-
         (   S = hold_line
         ->  (   ball_in_own_half(Team)
             ->  ball(BallPos),
-                step_toward(player(Team, defender), BallPos)
+                % Priority: tackle if an opponent with possession is adjacent.
+                (   possession(OppT, OppR), OppT \= Team,
+                    player(Team, defender, DPos, _),
+                    player(OppT, OppR, OPos, _),
+                    manhattan(DPos, OPos, DD),
+                    move_step(MS), DD =< MS
+                ->  do_action(tackle(player(Team, defender), player(OppT, OppR)))
+                ;   step_toward(player(Team, defender), BallPos)
+                )
             ;   true
             )
         ;   S = intercept
@@ -606,7 +694,11 @@ act_defender(Team) :-
             ;   step_toward(player(Team, defender), BallPos)
             )
         ;   S = pass_to_forward
-        ->  do_action(pass(player(Team, defender), player(Team, forward)))
+        ->  (   applicable(pass(player(Team, defender), player(Team, forward)), world)
+            ->  do_action(pass(player(Team, defender), player(Team, forward)))
+            ;   player(Team, forward, FwdPos, _),
+                step_toward(player(Team, defender), FwdPos)
+            )
         ;   true
         )
     )).
@@ -677,7 +769,8 @@ check_goal :-
         ball(position(Bx, By)),
         (   goal_position(GoalOwner, rect(X1, Y1, X2, Y2)),
             X1 =< Bx, Bx =< X2,
-            Y1 =< By, By =< Y2
+            Y1 =< By, By =< Y2,
+            \+ possession(GoalOwner, goalkeeper)  % GK holding ball in own area = save, not goal
         ->  % Attacker is the opponent of the goal owner.
             (GoalOwner = team1 -> Attacker = team2 ; Attacker = team1),
             % Increment the attacker's score.
@@ -693,13 +786,21 @@ check_goal :-
             inc_metric(goals, Attacker),
             format("*** GOAL! ~w scored! Score is now ~w-~w ***~n",
                    [Attacker, NewS1, NewS2]),
+            % Save stamina before reset so it persists across the goal.
+            findall(T-R-S, player(T, R, _, S), SavedStamina),
             % Reposition players and ball; restore accumulated scores afterward.
-            % Conceding team (goal owner) restarts with possession from center.
             setup_world,
             retract(score(team1, _)), assertz(score(team1, NewS1)),
             retract(score(team2, _)), assertz(score(team2, NewS2)),
-            retract(possession(_, _)),
-            assertz(possession(GoalOwner, forward))
+            % Restore each player's pre-goal stamina (keep CSP positions).
+            forall(member(T-R-Stam, SavedStamina), (
+                retract(player(T, R, CurrentPos, _)),
+                assertz(player(T, R, CurrentPos, Stam))
+            )),
+            % Kick-off: conceding team restarts from center with their saved stamina.
+            member(GoalOwner-forward-FwdStam,  SavedStamina),
+            member(GoalOwner-defender-DefStam, SavedStamina),
+            do_kickoff(GoalOwner, FwdStam, DefStam)
         ;   true
         )
     )).
@@ -708,14 +809,14 @@ check_goal :-
 % T4.3 — Randomized turn order (D1)
 % ---------------------------------------------------------------------------
 
-% next_turn/0 — Pick the next active team at random from [team1, team2],
-%   retract the old turn/1 fact, assert the new one, and log the choice.
+% next_first_mover/0 — Pick which team acts first this round at random.
+%   Both teams always act every round; this only controls the order.
 %   Uses random_member/2 from library(random) per locked decision D1.
-next_turn :-
+next_first_mover :-
     random_member(T, [team1, team2]),
-    retractall(turn(_)),
-    assertz(turn(T)),
-    format("-- turn: ~w --~n", [T]).
+    retractall(first_mover(_)),
+    assertz(first_mover(T)),
+    format("-- first_mover: ~w --~n", [T]).
 
 % ---------------------------------------------------------------------------
 % T6.2 — Metrics helpers and summary printer
@@ -773,11 +874,11 @@ print_summary :-
 %   ball position, whose turn, possession, score, and all 6 player positions + stamina.
 print_state :-
     ball(BallPos),
-    turn(T),
+    first_mover(T),
     possession(PT, PR),
     score(team1, S1),
     score(team2, S2),
-    format("[state] ball=~w turn=~w possession=~w-~w score=team1:~w team2:~w~n",
+    format("[state] ball=~w first_mover=~w possession=~w-~w score=team1:~w team2:~w~n",
            [BallPos, T, PT, PR, S1, S2]),
     forall(
         member(Team-Role, [team1-goalkeeper, team1-defender, team1-forward,
@@ -793,8 +894,8 @@ print_state :-
 %   prevent stray choice points.
 simulate_round :-
     once((
-        next_turn,
-        turn(First),
+        next_first_mover,
+        first_mover(First),
         (First = team1 -> Other = team2 ; Other = team1),
         act_goalkeeper(First),
         act_defender(First),
@@ -822,6 +923,9 @@ loop_rounds(N) :-
 %   prints the starting banner and initial state, then runs N rounds via loop_rounds/1.
 run_simulation(N) :-
     setup_world,
+    % Initial kick-off: team1 forward starts with ball at center, passes to defender.
+    stamina_init(St),
+    do_kickoff(team1, St, St),
     format("~n=== Starting simulation: ~w rounds ===~n", [N]),
     print_state,
     loop_rounds(N).
