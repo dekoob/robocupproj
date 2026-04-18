@@ -44,7 +44,7 @@ Full diagram and rationale: see [plan/project-partition.md](../plan/project-part
 |---|---|---|---|
 | Field size | `field(size(100,50))` | Sec 1 | static |
 | Goals | `goal_position(team1, rect(0,20,0,30))`, `goal_position(team2, rect(100,20,100,30))` | Sec 1 | static |
-| Ranges | `kick_range(10)`, `catch_range(2)`, `move_step(1)` | Sec 1 | static |
+| Ranges | `kick_range(50)`, `catch_range(2)`, `move_step(1)` | Sec 1 | static |
 | Stamina constants | `stamina_init(4000)`, `stamina_cost_move(10)`, `stamina_cost_kick(20)` | Sec 1 | static |
 | Ball | `ball(position(X,Y))` | Sec 2 | `:- dynamic` |
 | Players | `player(Team, Role, position(X,Y), Stamina)` | Sec 2 | `:- dynamic` |

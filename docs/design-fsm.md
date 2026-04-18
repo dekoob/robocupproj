@@ -56,7 +56,7 @@ Conditions are evaluated for `(Team, Role)` — see §6 for the predicate shape.
 | defender | `hold_line` | `ball_in_own_half(Team)` AND `\+ has_possession(_, _)` (ball is loose) | `intercept` |
 | defender | `intercept` | `has_possession(Team, defender)` | `pass_to_forward` |
 | defender | `pass_to_forward` | `\+ has_possession(Team, defender)` | `hold_line` |
-| forward | `advance` | `\+ ball_in_own_half(Team)` AND `\+ has_possession(Team, forward)` | `chase_ball` |
+| forward | `advance` | `ball_is_loose(Team)` AND `\+ has_possession(Team, forward)` | `chase_ball` |
 | forward | `chase_ball` | `can_shoot(Team, forward)` | `shoot` |
 | forward | `shoot` | `\+ has_possession(Team, forward)` | `advance` |
 
@@ -105,15 +105,15 @@ Defender's "ball loose" case needs `\+ has_possession(_, _)` (anyone holding the
 
 ## 9. Worked example (unit-test fact for the implementer)
 
-After `setup_world` on a fresh world (ball at (50,25), team1 forward placed in `X in [50,100]` per CSP):
+After `setup_world` on a fresh world (ball at (50,25), possession(none,none)):
 - `current_state(team1, forward, advance)` is asserted by `init_fsm`.
-- `ball_in_own_half(team1)` succeeds (ball X = 50 ≤ 50).
-- Transition `advance → chase_ball` requires `\+ ball_in_own_half(team1)` — **fails**.
-- `tick_fsm(team1, forward)` therefore leaves the state at `advance`. No log line.
+- `ball_is_loose(team1)` succeeds (possession is none-none).
+- `\+ has_possession(team1, forward)` succeeds.
+- `tick_fsm(team1, forward)` fires `advance → chase_ball` immediately. Forward starts chasing ball in round 1.
 
-Then, scripted: `retract(ball(_)), assertz(ball(position(70,25)))`. Now `\+ ball_in_own_half(team1)` holds, `\+ has_possession(team1, forward)` holds (possession is `(none,none)`):
-- `tick_fsm(team1, forward)` fires `advance → chase_ball`, prints `team1 forward: advance -> chase_ball`.
-- Second call with same world: no transition from `chase_ball` fires (`can_shoot` requires possession). Idempotent.
+Second call with ball at forward's position and possession(team1, forward):
+- `can_shoot` fires if forward is within kick_range(50) of opponent goal — at midfield this is satisfied.
+- `tick_fsm` fires `chase_ball → shoot`; `act_forward` calls `do_action(kick(…, position(100,25)))`. Goal possible.
 
 ## 10. Acceptance test hook
 

@@ -38,7 +38,7 @@
 ### 2.1 Static knowledge base — Section 1 of robocup.pl
 - field(size(100, 50)) — robocup.pl:23 — single fact encodes field dimensions; read by in_field/1 (robocup.pl:339) and CSP domain bounds
 - goal_position(team1, rect(0,20,0,30)), goal_position(team2, rect(100,20,100,30)) — robocup.pl:26-27 — goal rectangles used by check_goal/0 for scoring detection
-- kick_range(10), catch_range(2), move_step(1) — robocup.pl:30-35 — action radii; referenced by FSM sensor helpers and STRIPS applicable/2
+- kick_range(50), catch_range(2), move_step(1) — robocup.pl:30-35 — action radii; referenced by FSM sensor helpers and STRIPS applicable/2; kick_range(50) allows cross-field kicks and goalkeeper clearances
 - stamina_init(4000), stamina_cost_move(10), stamina_cost_kick(20) — robocup.pl:38-45 — constants; read by apply_effects/1; never mutated during a run
 
 ### 2.2 Dynamic world model — Section 2 of robocup.pl
@@ -128,7 +128,7 @@
 | defender | hold_line | ball_in_own_half AND ball_is_loose | intercept |
 | defender | intercept | has_possession | pass_to_forward |
 | defender | pass_to_forward | NOT has_possession | hold_line |
-| forward | advance | NOT ball_in_own_half AND NOT has_possession | chase_ball |
+| forward | advance | ball_is_loose AND NOT has_possession | chase_ball |
 | forward | chase_ball | can_shoot | shoot |
 | forward | shoot | NOT has_possession | advance |
 
@@ -162,6 +162,7 @@
 | move_step(Actor, Dir) | at(Actor,Pos) (robocup.pl:366), stamina_ge(Actor,cost_move) (robocup.pl:368), in_field(NewPos) (robocup.pl:370-371) | del at(Actor,Pos), add at(Actor,NewPos); stamina -= 10; if carrier: ball moves with player (robocup.pl:417-419) |
 | kick(Actor, TargetPos) | has_ball(Actor) (robocup.pl:376), stamina_ge(Actor,cost_kick) (robocup.pl:378-379), in_field(TargetPos) (robocup.pl:380), in_range(Actor,TargetPos,kick_range) (robocup.pl:381) | del ball_at(_), add ball_at(TargetPos); possession -> (none,none) (robocup.pl:429-433); stamina -= 20; inc metric(kicks,T) |
 | catch(Actor) | Actor=player(_,goalkeeper) (robocup.pl:385), possession(none,none) (robocup.pl:386), in_range(Actor,BPos,catch_range) (robocup.pl:388) | ball snaps to goalkeeper pos (robocup.pl:437-443); possession -> (Team,goalkeeper); inc metric(catches,T) |
+| collect(Actor) | Actor=player(_,R) R\=goalkeeper (robocup.pl), possession(none,none), manhattan(ActorPos,BallPos,D) D=<1 | ball snaps to player pos; possession -> (Team,R); inc metric(catches,T) — enables defenders and forwards to secure a loose ball |
 | pass(Actor, Teammate) | has_ball(Actor) (robocup.pl:394), MR \= R (robocup.pl:395), in_range(Actor,TeammatePos,kick_range) (robocup.pl:399-400), stamina_ge(Actor,cost_kick) (robocup.pl:398) | ball moves to teammate pos (robocup.pl:452-456); possession -> (Team,TeammateRole); stamina -= 20; inc metric(kicks,T) |
 
 > Source: docs/design-strips.md section 4 and robocup.pl:300-471
