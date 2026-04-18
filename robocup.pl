@@ -1,0 +1,778 @@
+% =============================================================================
+% Project  : RoboCup Symbolic-AI Prolog
+% Purpose  : Simplified RoboCup soccer simulation demonstrating FSM + STRIPS + CSP.
+%            Two teams of three (goalkeeper, defender, forward) on a 100x50 field.
+% Run      : swipl -s robocup.pl    then    ?- run_simulation(10).
+% Context  : See docs/project-context.md for canonical data shapes, predicate
+%            contracts, section ownership, and design decisions.
+% =============================================================================
+
+:- use_module(library(clpfd)).
+:- use_module(library(random)).
+
+% === Section 1. Static knowledge ===
+
+% Static course-knowledge facts — these never change during a simulation run.
+% Numbers chosen so that kick/catch events are visible on a 100x50 grid:
+%   kick_range(10) means a forward near the goal can shoot; catch_range(2) means
+%   a goalkeeper must be close to the ball to intercept it.
+% Stamina is large enough (4000) to survive at least 100 move steps at cost 10 each
+% before a player is forced to conserve energy.
+
+% field(+Size) — describes the playing field dimensions as size(Width, Height)
+field(size(100, 50)).
+
+% goal_position(+Team, +Rect) — rect(X1,Y1,X2,Y2) bounds of each team's goal opening
+goal_position(team1, rect(0, 20, 0, 30)).    % team1 goal: left edge, y in [20,30]
+goal_position(team2, rect(100, 20, 100, 30)). % team2 goal: right edge, y in [20,30]
+
+% kick_range(+R) — maximum Manhattan distance at which a player can kick the ball
+kick_range(10).
+
+% catch_range(+R) — maximum Manhattan distance at which a goalkeeper can catch the ball
+catch_range(2).
+
+% move_step(+S) — distance a player advances in one move action
+move_step(1).
+
+% stamina_init(+S) — starting stamina for every player at world setup
+stamina_init(4000).
+
+% stamina_cost_move(+C) — stamina deducted per move_step action
+stamina_cost_move(10).
+
+% stamina_cost_kick(+C) — stamina deducted per kick action
+stamina_cost_kick(20).
+
+% === Section 2. Dynamic world model ===
+
+% Dynamic declarations for every mutable predicate used across all sections.
+% Declared here once, centrally, to avoid dependency cycles.
+
+:- dynamic ball/1.          % ball(position(X,Y)) — current ball position
+:- dynamic player/4.        % player(Team, Role, position(X,Y), Stamina)
+:- dynamic score/2.         % score(Team, N) — current score for Team
+:- dynamic possession/2.    % possession(Team, Role) — who holds the ball; possession(none,none) = loose
+:- dynamic turn/1.          % turn(Team) — whose turn it is
+:- dynamic current_state/3. % current_state(Team, Role, State) — FSM state per player
+:- dynamic metric/3.        % metric(kicks|catches|goals, Team, N) — counters
+
+% TODO (other sections) — world initialisation (setup_world/0) goes in Section 3.
+
+% === Section 3. CSP initial formation ===
+
+% place_team(+Team) — CSP per-team placement — 6 clpfd vars (X,Y for gk/df/fw),
+%   domain + pairwise spacing; deterministic via once/labeling.
+place_team(Team) :-
+    % Select domain bounds based on which team is being placed.
+    (   Team = team1
+    ->  XgkLo = 0,  XgkHi = 15,  YgkLo = 20, YgkHi = 30,
+        XdfLo = 0,  XdfHi = 50,  YdfLo = 0,  YdfHi = 50,
+        XfwLo = 50, XfwHi = 100, YfwLo = 0,  YfwHi = 50
+    ;   % team2 — X domains mirrored
+        XgkLo = 85, XgkHi = 100, YgkLo = 20, YgkHi = 30,
+        XdfLo = 50, XdfHi = 100, YdfLo = 0,  YdfHi = 50,
+        XfwLo = 0,  XfwHi = 50,  YfwLo = 0,  YfwHi = 50
+    ),
+    % Declare 6 clpfd variables — one (X,Y) pair per role.
+    Xgk in XgkLo..XgkHi, Ygk in YgkLo..YgkHi,
+    Xdf in XdfLo..XdfHi, Ydf in YdfLo..YdfHi,
+    Xfw in XfwLo..XfwHi, Yfw in YfwLo..YfwHi,
+    % Pairwise Manhattan-distance spacing constraints (>= 15) between all 3 roles.
+    abs(Xgk - Xdf) + abs(Ygk - Ydf) #>= 15,
+    abs(Xgk - Xfw) + abs(Ygk - Yfw) #>= 15,
+    abs(Xdf - Xfw) + abs(Ydf - Yfw) #>= 15,
+    % Label all 6 vars deterministically — first solution only.
+    once(labeling([], [Xgk, Ygk, Xdf, Ydf, Xfw, Yfw])),
+    % Commit: clear any existing players for this team, then assert the 3 facts.
+    retractall(player(Team, _, _, _)),
+    stamina_init(Stamina),
+    assertz(player(Team, goalkeeper, position(Xgk, Ygk), Stamina)),
+    assertz(player(Team, defender,   position(Xdf, Ydf), Stamina)),
+    assertz(player(Team, forward,    position(Xfw, Yfw), Stamina)).
+
+% setup_world/0 — Reset all dynamic state, place both teams via CSP,
+%   seed score/possession/turn.
+setup_world :-
+    retractall(ball(_)),
+    retractall(player(_, _, _, _)),
+    retractall(score(_, _)),
+    retractall(possession(_, _)),
+    retractall(turn(_)),
+    retractall(current_state(_, _, _)),
+    retractall(metric(_, _, _)),
+    assertz(ball(position(50, 25))),
+    place_team(team1),
+    place_team(team2),
+    assertz(score(team1, 0)),
+    assertz(score(team2, 0)),
+    assertz(possession(none, none)),
+    init_fsm,
+    assertz(turn(team1)).
+
+% === Section 4. FSM role state machines ===
+
+% ---------------------------------------------------------------------------
+% Sensed helper predicates — side-effect-free queries on ball/1, player/4,
+% possession/2 and the static range facts.  All use Manhattan distance.
+%
+% Arity convention used by eval_cond/3:
+%   arity-1 (Team only)       : ball_in_own_half, ball_is_loose
+%   arity-2 (Team, Role)      : everything else
+% ---------------------------------------------------------------------------
+
+% manhattan(+pos(X1,Y1), +pos(X2,Y2), -Dist) — Manhattan distance between two positions.
+manhattan(position(X1, Y1), position(X2, Y2), Dist) :-
+    Dist is abs(X1 - X2) + abs(Y1 - Y2).
+
+% ball_close(+Team, +Role) — player is within kick_range + 5 Manhattan distance of the ball.
+ball_close(Team, Role) :-
+    player(Team, Role, PlayerPos, _),
+    ball(BallPos),
+    kick_range(K),
+    manhattan(PlayerPos, BallPos, Dist),
+    Dist =< K + 5.
+
+% in_kick_range(+Team, +Role) — player is within kick_range Manhattan distance of the ball.
+in_kick_range(Team, Role) :-
+    player(Team, Role, PlayerPos, _),
+    ball(BallPos),
+    kick_range(K),
+    manhattan(PlayerPos, BallPos, Dist),
+    Dist =< K.
+
+% in_catch_range(+Team, +Role) — player is within catch_range Manhattan distance of the ball.
+in_catch_range(Team, Role) :-
+    player(Team, Role, PlayerPos, _),
+    ball(BallPos),
+    catch_range(C),
+    manhattan(PlayerPos, BallPos, Dist),
+    Dist =< C.
+
+% ball_in_own_half(+Team) — succeeds when the ball is in Team's own defensive half.
+%   Boundary rule: X = 50 counts as team1's half (X in [0,50]) and as team2's half
+%   (X in [50,100]).  Both teams may claim X=50 — this is intentional and mirrors
+%   a contested centre-line; it means ball_in_own_half/1 can succeed for BOTH teams
+%   when the ball is exactly on the halfway line.
+ball_in_own_half(team1) :-
+    ball(position(X, _)),
+    X =< 50.
+ball_in_own_half(team2) :-
+    ball(position(X, _)),
+    X >= 50.
+
+% has_possession(+Team, +Role) — succeeds when that player currently holds the ball.
+has_possession(Team, Role) :-
+    possession(Team, Role).
+
+% ball_is_loose(+Team) — succeeds when no player holds the ball (Team arg ignored;
+%   kept arity-1 so eval_cond/3 dispatches it without a Role argument).
+ball_is_loose(_Team) :-
+    possession(none, none).
+
+% can_shoot(+Team, +Role) — player has possession AND is within kick_range of the
+%   opponent goal centre.  Goal centres: team1 attacks (100,25); team2 attacks (0,25).
+can_shoot(Team, Role) :-
+    has_possession(Team, Role),
+    player(Team, Role, PlayerPos, _),
+    (   Team = team1
+    ->  GoalPos = position(100, 25)
+    ;   GoalPos = position(0, 25)
+    ),
+    kick_range(K),
+    manhattan(PlayerPos, GoalPos, Dist),
+    Dist =< K.
+
+% can_pass(+Team, +Role) — player has possession AND at least one OTHER teammate is
+%   within kick_range.
+can_pass(Team, Role) :-
+    has_possession(Team, Role),
+    player(Team, Role, PlayerPos, _),
+    kick_range(K),
+    player(Team, MateRole, MatePos, _),
+    MateRole \= Role,
+    manhattan(PlayerPos, MatePos, Dist),
+    Dist =< K,
+    !.   % commit on finding the first qualifying teammate
+
+% ---------------------------------------------------------------------------
+% FSM Transition table
+%
+%   transition(+Role, +FromState, +CondList, +ToState)
+%
+%   Static facts only — never asserted/retracted at runtime.
+%   CondList elements: Pred atom (called as Pred(Team,Role) or Pred(Team))
+%                      or \+ Pred for negated conditions.
+%   Arity dispatch: ball_in_own_half and ball_is_loose are arity-1 (Team only).
+%                   All other helpers are arity-2 (Team, Role).
+%
+%   Role          From              Conditions                       To
+%   ------------- ----------------- -------------------------------- -----------------
+%   goalkeeper    guard_goal        ball_in_own_half,                chase_ball
+%                                   \+ has_possession
+%   goalkeeper    chase_ball        in_catch_range                   hold_ball
+%   goalkeeper    hold_ball         \+ has_possession                guard_goal
+%   defender      hold_line         ball_in_own_half,                intercept
+%                                   ball_is_loose
+%   defender      intercept         has_possession                   pass_to_forward
+%   defender      pass_to_forward   \+ has_possession                hold_line
+%   forward       advance           \+ ball_in_own_half,             chase_ball
+%                                   \+ has_possession
+%   forward       chase_ball        can_shoot                        shoot
+%   forward       shoot             \+ has_possession                advance
+% ---------------------------------------------------------------------------
+
+transition(goalkeeper, guard_goal,      [ball_in_own_half, \+ has_possession], chase_ball).
+transition(goalkeeper, chase_ball,      [in_catch_range],                      hold_ball).
+transition(goalkeeper, hold_ball,       [\+ has_possession],                   guard_goal).
+
+transition(defender,   hold_line,       [ball_in_own_half, ball_is_loose],     intercept).
+transition(defender,   intercept,       [has_possession],                      pass_to_forward).
+transition(defender,   pass_to_forward, [\+ has_possession],                   hold_line).
+
+transition(forward,    advance,         [\+ ball_in_own_half, \+ has_possession], chase_ball).
+transition(forward,    chase_ball,      [can_shoot],                           shoot).
+transition(forward,    shoot,           [\+ has_possession],                   advance).
+
+% ---------------------------------------------------------------------------
+% Arity lookup — used by eval_cond/3 to know whether to call Pred(Team) or
+%   Pred(Team, Role).  Only arity-1 sensors are listed; everything else is 2.
+% ---------------------------------------------------------------------------
+
+% sensor_arity(+Pred, -Arity) — arity-1 sensors for eval_cond dispatch.
+sensor_arity(ball_in_own_half, 1).
+sensor_arity(ball_is_loose,    1).
+
+% ---------------------------------------------------------------------------
+% Condition evaluator
+% ---------------------------------------------------------------------------
+
+% eval_cond(+Team, +Role, +Cond) — evaluate a single FSM condition element.
+%   Dispatches on arity via sensor_arity/2; negation handled by \+ wrapper.
+eval_cond(Team, Role, \+ Pred) :-
+    !,
+    \+ eval_cond(Team, Role, Pred).
+eval_cond(Team, _Role, Pred) :-
+    sensor_arity(Pred, 1),
+    !,
+    call(Pred, Team).
+eval_cond(Team, Role, Pred) :-
+    call(Pred, Team, Role).
+
+% eval_all(+Team, +Role, +CondList) — all conditions in CondList must hold.
+eval_all(_Team, _Role, []).
+eval_all(Team, Role, [C | Cs]) :-
+    eval_cond(Team, Role, C),
+    eval_all(Team, Role, Cs).
+
+% ---------------------------------------------------------------------------
+% FSM initialisation
+% ---------------------------------------------------------------------------
+
+% init_fsm/0 — assert the 6 initial current_state/3 facts (one per team/role),
+%   clearing any stale entries first.
+init_fsm :-
+    retractall(current_state(_, _, _)),
+    assertz(current_state(team1, goalkeeper, guard_goal)),
+    assertz(current_state(team1, defender,   hold_line)),
+    assertz(current_state(team1, forward,    advance)),
+    assertz(current_state(team2, goalkeeper, guard_goal)),
+    assertz(current_state(team2, defender,   hold_line)),
+    assertz(current_state(team2, forward,    advance)).
+
+% ---------------------------------------------------------------------------
+% FSM tick — deterministic, no stray choice points
+% ---------------------------------------------------------------------------
+
+% tick_fsm(+Team, +Role) — advance the FSM for one player by one tick.
+%   Reads the current state, tries the first matching transition, and if found
+%   retracts the old state and asserts the new one with a log line.
+%   Succeeds silently if no transition fires.
+tick_fsm(Team, Role) :-
+    current_state(Team, Role, S),
+    (   once((transition(Role, S, Cond, NewS), eval_all(Team, Role, Cond)))
+    ->  retract(current_state(Team, Role, S)),
+        assertz(current_state(Team, Role, NewS)),
+        format("~w ~w: ~w -> ~w~n", [Team, Role, S, NewS])
+    ;   true
+    ).
+
+% === Section 5. STRIPS action schema ===
+
+% ---------------------------------------------------------------------------
+% STRIPS action table
+%
+%  Action              | Preconditions                                          | Effects
+%  --------------------|--------------------------------------------------------|-------------------------------------------
+%  move_step(A, Dir)   | at(A,Pos), stamina_ge(A, cost_move), in_field(NewPos) | del(at(A,Pos)), add(at(A,NewPos));
+%                      |                                                        |   stamina -= cost_move;
+%                      |                                                        |   if has_ball(A): del(ball_at(Pos)), add(ball_at(NewPos))
+%  kick(A, TargetPos)  | has_ball(A), stamina_ge(A, cost_kick),                | del(ball_at(_)), add(ball_at(TargetPos));
+%                      |   in_field(TargetPos), in_range(A,TargetPos,kick_range)|  del(has_ball(A)); stamina -= cost_kick;
+%                      |                                                        |   possession -> (none,none)
+%  catch(A)            | A=player(_,goalkeeper), ball_at(BPos),                | del(ball_at(BPos)), add(ball_at(Pos));
+%                      |   in_range(A, BPos, catch_range)                      |   add(has_ball(A)); possession -> (Team,goalkeeper)
+%  pass(A, Teammate)   | has_ball(A), at(A,Pa), at(Teammate,Pt),              | del(ball_at(_)), add(ball_at(Pt));
+%                      |   in_range(A,Pt,kick_range), same_team(A,Teammate),   |   del(has_ball(A)), add(has_ball(Teammate));
+%                      |   A\=Teammate, stamina_ge(A, cost_kick)               |   possession -> (Team,TeammateRole);
+%                      |                                                        |   stamina -= cost_kick
+%
+%  World-literals are computed on demand against live dynamic facts.
+%  No parallel literal DB is maintained — this is the key divergence from
+%  textbook STRIPS and is justified by the single-mutable-world constraint.
+% ---------------------------------------------------------------------------
+
+% ---------------------------------------------------------------------------
+% Helpers
+% ---------------------------------------------------------------------------
+
+% step(+Pos, +Dir, +StepSize, -NewPos) — compute the position one StepSize
+%   step from Pos in direction Dir. north=+Y, south=-Y, east=+X, west=-X.
+%   No bounds clipping is done here; in_field/1 guards illegal moves.
+step(position(X, Y), north, S, position(X, NY)) :- NY is Y + S.
+step(position(X, Y), south, S, position(X, NY)) :- NY is Y - S.
+step(position(X, Y), east,  S, position(NX, Y)) :- NX is X + S.
+step(position(X, Y), west,  S, position(NX, Y)) :- NX is X - S.
+
+% in_field(+Pos) — Pos = position(X,Y); succeeds iff X in [0,W] and Y in [0,H].
+%   Reads field(size(W,H)) to avoid hardcoding field dimensions.
+in_field(position(X, Y)) :-
+    field(size(W, H)),
+    X >= 0, X =< W,
+    Y >= 0, Y =< H.
+
+% in_range(+Actor, +Pos, +RangeAtom) — Actor = player(Team,Role); looks up the
+%   actor's current position, calls RangeAtom(R) for the numeric radius, and
+%   checks manhattan distance from actor to Pos is <= R.  Reuses manhattan/3 from Sec 4.
+in_range(player(Team, Role), Pos, RangeAtom) :-
+    player(Team, Role, ActorPos, _),
+    call(RangeAtom, R),
+    manhattan(ActorPos, Pos, Dist),
+    Dist =< R.
+
+% same_team(+ActorA, +ActorB) — both terms are player(T,_) with identical T.
+same_team(player(T, _), player(T, _)).
+
+% ---------------------------------------------------------------------------
+% applicable/2 — precondition checks
+% ---------------------------------------------------------------------------
+
+% applicable(+Action, +_World) — succeeds iff all STRIPS preconditions hold.
+%   _World is accepted for textbook fidelity but unused; pass the atom `world`.
+
+% applicable(move_step(Actor, Dir), _) — player exists, has stamina >= cost_move,
+%   and the stepped-to position is inside the field.
+applicable(move_step(player(T, R), Dir), _) :-
+    player(T, R, Pos, S),
+    stamina_cost_move(C),
+    S >= C,
+    move_step(StepSize),
+    step(Pos, Dir, StepSize, NewPos),
+    in_field(NewPos).
+
+% applicable(kick(Actor, TargetPos), _) — actor has possession, stamina >= cost_kick,
+%   TargetPos is in field, and within kick_range.
+applicable(kick(player(T, R), TargetPos), _) :-
+    possession(T, R),
+    player(T, R, _, S),
+    stamina_cost_kick(C),
+    S >= C,
+    in_field(TargetPos),
+    in_range(player(T, R), TargetPos, kick_range).
+
+% applicable(catch(Actor), _) — actor must be a goalkeeper, ball is loose,
+%   and actor is within catch_range of the ball.
+applicable(catch(player(T, goalkeeper)), _) :-
+    possession(none, none),
+    ball(BPos),
+    in_range(player(T, goalkeeper), BPos, catch_range).
+
+% applicable(pass(Actor, Teammate), _) — actor has possession, teammate is on the
+%   same team with a different role, actor stamina >= cost_kick, and teammate is
+%   within kick_range.
+applicable(pass(player(T, R), player(T, MR)), _) :-
+    possession(T, R),
+    MR \= R,
+    player(T, MR, TeammatePos, _),
+    player(T, R, _, S),
+    stamina_cost_kick(C),
+    S >= C,
+    in_range(player(T, R), TeammatePos, kick_range).
+
+% ---------------------------------------------------------------------------
+% apply_effects/1 — state mutation via retract/assertz
+% ---------------------------------------------------------------------------
+
+% apply_effects(+Action) — mutates the dynamic DB.  No logging here.
+
+% apply_effects(move_step(Actor, Dir)) — move player; if carrying ball, move ball too.
+apply_effects(move_step(player(T, R), Dir)) :-
+    retract(player(T, R, Pos, S)),
+    move_step(StepSize),
+    step(Pos, Dir, StepSize, NewPos),
+    stamina_cost_move(C),
+    NewS is S - C,
+    assertz(player(T, R, NewPos, NewS)),
+    (   possession(T, R)
+    ->  retract(ball(_)),
+        assertz(ball(NewPos))
+    ;   true
+    ).
+
+% apply_effects(kick(Actor, TargetPos)) — move ball to target, clear possession,
+%   deduct stamina from kicker; increments kicks metric for kicker's team.
+apply_effects(kick(player(T, R), TargetPos)) :-
+    retract(player(T, R, Pos, S)),
+    stamina_cost_kick(C),
+    NewS is S - C,
+    assertz(player(T, R, Pos, NewS)),
+    retract(ball(_)),
+    assertz(ball(TargetPos)),
+    retract(possession(_, _)),
+    assertz(possession(none, none)),
+    inc_metric(kicks, T).
+
+% apply_effects(catch(Actor)) — goalkeeper catches: ball snaps to gk position,
+%   possession transfers; increments catches metric for catcher's team.
+apply_effects(catch(player(T, goalkeeper))) :-
+    player(T, goalkeeper, GkPos, _),
+    retract(possession(_, _)),
+    assertz(possession(T, goalkeeper)),
+    retract(ball(_)),
+    assertz(ball(GkPos)),
+    inc_metric(catches, T).
+
+% apply_effects(pass(Actor, Teammate)) — transfer ball and possession to teammate,
+%   deduct stamina from passer; increments kicks metric for passer's team (pass = kick).
+apply_effects(pass(player(T, R), player(T, MateRole))) :-
+    retract(player(T, R, Pos, S)),
+    stamina_cost_kick(C),
+    NewS is S - C,
+    assertz(player(T, R, Pos, NewS)),
+    player(T, MateRole, TeammatePos, _),
+    retract(ball(_)),
+    assertz(ball(TeammatePos)),
+    retract(possession(_, _)),
+    assertz(possession(T, MateRole)),
+    inc_metric(kicks, T).
+
+% ---------------------------------------------------------------------------
+% do_action/1 — safe wrapper: applicable check + effects + one log line
+% ---------------------------------------------------------------------------
+
+% do_action(+Action) — if Action is applicable, apply its effects and log.
+%   Always succeeds; silently does nothing when the action is inapplicable,
+%   so role-behavior callers never crash on legal-but-inapplicable actions.
+do_action(Action) :-
+    (   applicable(Action, world)
+    ->  apply_effects(Action),
+        format("  do_action: ~w~n", [Action])
+    ;   true
+    ).
+
+% === Section 6. Role behaviors ===
+
+% ---------------------------------------------------------------------------
+% Role behavior dispatch — FSM state -> STRIPS action mapping
+%
+%  Role         FSM state          Action chosen
+%  ------------ ------------------ -----------------------------------------
+%  goalkeeper   guard_goal         step_toward own goal center if far (>2);
+%                                  else no-op
+%               chase_ball         step_toward ball position
+%               hold_ball          kick to midfield position(50,25)
+%
+%  defender     hold_line          step_toward ball if ball in own half;
+%                                  else no-op
+%               intercept          step_toward ball
+%               pass_to_forward    pass(defender, forward)
+%
+%  forward      advance            step_toward opponent goal center
+%               chase_ball         step_toward ball position
+%               shoot              kick toward opponent goal center
+%
+% Stamina fallback: do_action/1 internally checks applicable/2, which
+%   verifies stamina >= cost before executing.  When stamina is exhausted,
+%   the action is silently skipped.  No extra guards are needed here.
+% ---------------------------------------------------------------------------
+
+% ---------------------------------------------------------------------------
+% Helper
+% ---------------------------------------------------------------------------
+
+% step_toward(+Actor, +TargetPos) — move Actor one step toward TargetPos.
+%   Actor = player(Team, Role).  Reads actor's current position and picks the
+%   direction (east/west/north/south) that reduces Manhattan distance the most.
+%   Tie-break: prefer horizontal (east/west) over vertical (north/south).
+%   Succeeds silently (no-op) when Actor is already at TargetPos.
+step_toward(Actor, position(Tx, Ty)) :-
+    Actor = player(T, R),
+    player(T, R, position(Ax, Ay), _),
+    Dx is Tx - Ax,
+    Dy is Ty - Ay,
+    (   Dx =:= 0, Dy =:= 0
+    ->  true                        % already at target — no-op
+    ;   AbsDx is abs(Dx),
+        AbsDy is abs(Dy),
+        (   AbsDx >= AbsDy          % prefer horizontal; tie goes horizontal
+        ->  (Dx > 0 -> Dir = east ; Dir = west)
+        ;   (Dy > 0 -> Dir = north ; Dir = south)
+        ),
+        do_action(move_step(Actor, Dir))
+    ).
+
+% ---------------------------------------------------------------------------
+% T3.1 — Goalkeeper behavior
+% ---------------------------------------------------------------------------
+
+% act_goalkeeper(+Team) — advance FSM then execute one STRIPS action based on
+%   the resulting FSM state.  Deterministic: uses once/1 on the body.
+act_goalkeeper(Team) :-
+    once((
+        tick_fsm(Team, goalkeeper),
+        current_state(Team, goalkeeper, S),
+        (   S = guard_goal
+        ->  % Own goal centers: team1 -> (0,25), team2 -> (100,25)
+            (Team = team1 -> GoalCenter = position(0, 25)
+                           ; GoalCenter = position(100, 25)),
+            player(Team, goalkeeper, GkPos, _),
+            catch_range(Cr),
+            manhattan(GkPos, GoalCenter, Dist),
+            (   Dist > Cr
+            ->  step_toward(player(Team, goalkeeper), GoalCenter)
+            ;   true
+            )
+        ;   S = chase_ball
+        ->  ball(BallPos),
+            step_toward(player(Team, goalkeeper), BallPos)
+        ;   S = hold_ball
+        ->  do_action(kick(player(Team, goalkeeper), position(50, 25)))
+        ;   true
+        )
+    )).
+
+% ---------------------------------------------------------------------------
+% T3.2 — Defender behavior
+% ---------------------------------------------------------------------------
+
+% act_defender(+Team) — advance FSM then execute one STRIPS action based on
+%   the resulting FSM state.  Deterministic: wrapped in once/1.
+act_defender(Team) :-
+    once((
+        tick_fsm(Team, defender),
+        current_state(Team, defender, S),
+        (   S = hold_line
+        ->  (   ball_in_own_half(Team)
+            ->  ball(BallPos),
+                step_toward(player(Team, defender), BallPos)
+            ;   true
+            )
+        ;   S = intercept
+        ->  ball(BallPos),
+            step_toward(player(Team, defender), BallPos)
+        ;   S = pass_to_forward
+        ->  do_action(pass(player(Team, defender), player(Team, forward)))
+        ;   true
+        )
+    )).
+
+% ---------------------------------------------------------------------------
+% T3.3 — Forward behavior
+% ---------------------------------------------------------------------------
+
+% act_forward(+Team) — advance FSM then execute one STRIPS action based on
+%   the resulting FSM state.  Deterministic: wrapped in once/1.
+%   Stamina exhaustion is handled transparently by do_action/1 (no-op on fail).
+act_forward(Team) :-
+    once((
+        tick_fsm(Team, forward),
+        current_state(Team, forward, S),
+        (   S = advance
+        ->  % Opponent goal centers: team1 attacks (100,25), team2 attacks (0,25)
+            (Team = team1 -> GoalCenter = position(100, 25)
+                           ; GoalCenter = position(0, 25)),
+            step_toward(player(Team, forward), GoalCenter)
+        ;   S = chase_ball
+        ->  ball(BallPos),
+            step_toward(player(Team, forward), BallPos)
+        ;   S = shoot
+        ->  (Team = team1 -> GoalCenter = position(100, 25)
+                           ; GoalCenter = position(0, 25)),
+            do_action(kick(player(Team, forward), GoalCenter))
+        ;   true
+        )
+    )).
+
+% === Section 7. Dynamics and game rules ===
+
+% Metric counters are incremented by the STRIPS effects in Section 5 and by check_goal/0.
+% Metrics reset with setup_world (retractall is already in place in Section 3).
+%
+% Goal detection checks the ball against both goal rectangles defined in Section 1.
+% The attacker is the opponent of the goal owner: ball in team1's goal means team2 scored,
+% ball in team2's goal means team1 scored.  Turn order is randomized per round per
+% locked decision D1 (random_member/2 from library(random); seed left unseeded for variety).
+
+% ---------------------------------------------------------------------------
+% T4.2 — Goal detection, scoring, and world reset
+% ---------------------------------------------------------------------------
+
+% check_goal/0 — If the ball is inside any goal rectangle, the attacking team
+%   (opponent of the goal's owner) scores: increment score, print celebration,
+%   then reset via setup_world/0.  Deterministic: entire body wrapped in once/1.
+%   If no goal, succeeds silently without any side-effects.
+check_goal :-
+    once((
+        ball(position(Bx, By)),
+        (   goal_position(GoalOwner, rect(X1, Y1, X2, Y2)),
+            X1 =< Bx, Bx =< X2,
+            Y1 =< By, By =< Y2
+        ->  % Attacker is the opponent of the goal owner.
+            (GoalOwner = team1 -> Attacker = team2 ; Attacker = team1),
+            % Increment the attacker's score.
+            retract(score(Attacker, N)),
+            N1 is N + 1,
+            assertz(score(Attacker, N1)),
+            % Read updated scores for both teams for the celebration line.
+            (   Attacker = team1
+            ->  NewS1 = N1, score(team2, NewS2)
+            ;   score(team1, NewS1), NewS2 = N1
+            ),
+            % Increment the goals metric for the scoring team before reset.
+            inc_metric(goals, Attacker),
+            format("*** GOAL! ~w scored! Score is now ~w-~w ***~n",
+                   [Attacker, NewS1, NewS2]),
+            % Reset the world (zeros scores, repositions players and ball).
+            setup_world
+        ;   true
+        )
+    )).
+
+% ---------------------------------------------------------------------------
+% T4.3 — Randomized turn order (D1)
+% ---------------------------------------------------------------------------
+
+% next_turn/0 — Pick the next active team at random from [team1, team2],
+%   retract the old turn/1 fact, assert the new one, and log the choice.
+%   Uses random_member/2 from library(random) per locked decision D1.
+next_turn :-
+    random_member(T, [team1, team2]),
+    retractall(turn(_)),
+    assertz(turn(T)),
+    format("-- turn: ~w --~n", [T]).
+
+% ---------------------------------------------------------------------------
+% T6.2 — Metrics helpers and summary printer
+% ---------------------------------------------------------------------------
+
+% inc_metric(+Key, +Team) — atomically increment metric(Key, Team, N) by 1.
+%   If no fact exists yet, asserts metric(Key, Team, 1).
+%   Deterministic: uses if-then-else, no choice points.
+inc_metric(Key, Team) :-
+    (   retract(metric(Key, Team, N))
+    ->  N1 is N + 1,
+        assertz(metric(Key, Team, N1))
+    ;   assertz(metric(Key, Team, 1))
+    ).
+
+% metric_or_zero(+Key, +Team, -N) — read metric(Key, Team, N); default 0 if absent.
+%   Deterministic: uses if-then-else.
+metric_or_zero(Key, Team, N) :-
+    (   metric(Key, Team, N)
+    ->  true
+    ;   N = 0
+    ).
+
+% print_summary/0 — print a scoreboard-and-metrics block showing final score and
+%   per-team counters for kicks, catches, and goals.
+print_summary :-
+    score(team1, S1),
+    score(team2, S2),
+    format("=== Match summary ===~n"),
+    format("Score: team1=~w team2=~w~n", [S1, S2]),
+    format("Metrics:~n"),
+    forall(
+        member(Team, [team1, team2]),
+        (   metric_or_zero(kicks,   Team, K),
+            metric_or_zero(catches, Team, C),
+            metric_or_zero(goals,   Team, G),
+            format("  ~w: kicks=~w catches=~w goals=~w~n", [Team, K, C, G])
+        )
+    ).
+
+% === Section 8. Simulator entry points ===
+
+% ---------------------------------------------------------------------------
+% Simulator entry — round flow:
+%   1. next_turn     — pick random active team, log it.
+%   2. Act for both teams in order: First gk, df, fw; Other gk, df, fw.
+%      Each act_<role>/1 internally calls tick_fsm then selects a STRIPS action.
+%      Do NOT call tick_fsm separately here — that would double-tick.
+%   3. check_goal    — detect scoring; resets world if goal occurred.
+%   4. print_state   — compact snapshot of the world after the round.
+%   5. sleep(0.3)    — T4.4 inter-round pause for readability.
+% ---------------------------------------------------------------------------
+
+% print_state/0 — print a compact snapshot of current world state:
+%   ball position, whose turn, possession, score, and all 6 player positions + stamina.
+print_state :-
+    ball(BallPos),
+    turn(T),
+    possession(PT, PR),
+    score(team1, S1),
+    score(team2, S2),
+    format("[state] ball=~w turn=~w possession=~w-~w score=team1:~w team2:~w~n",
+           [BallPos, T, PT, PR, S1, S2]),
+    forall(
+        member(Team-Role, [team1-goalkeeper, team1-defender, team1-forward,
+                           team2-goalkeeper, team2-defender, team2-forward]),
+        (   player(Team, Role, Pos, St)
+        ->  format("  ~w-~w\t~w\tst=~w~n", [Team, Role, Pos, St])
+        ;   true
+        )
+    ).
+
+% simulate_round/0 — execute one full round: turn selection, all 6 player actions,
+%   goal detection, state snapshot, and inter-round pause.  Wrapped in once/1 to
+%   prevent stray choice points.
+simulate_round :-
+    once((
+        next_turn,
+        turn(First),
+        (First = team1 -> Other = team2 ; Other = team1),
+        act_goalkeeper(First),
+        act_defender(First),
+        act_forward(First),
+        act_goalkeeper(Other),
+        act_defender(Other),
+        act_forward(Other),
+        check_goal,
+        print_state,
+        sleep(0.3)
+    )).
+
+% loop_rounds(+N) — inner recursive helper for run_simulation/1.
+%   Does not call setup_world, so the world is not re-initialised between rounds.
+%   Base case prints the final score; recursive case runs one round then decrements.
+loop_rounds(0) :-
+    print_final_score.
+loop_rounds(N) :-
+    N > 0,
+    simulate_round,
+    N1 is N - 1,
+    loop_rounds(N1).
+
+% run_simulation(+N) — entry point.  Initialises the world via setup_world/0 (once),
+%   prints the starting banner and initial state, then runs N rounds via loop_rounds/1.
+run_simulation(N) :-
+    setup_world,
+    format("~n=== Starting simulation: ~w rounds ===~n", [N]),
+    print_state,
+    loop_rounds(N).
+
+% print_final_score/0 — print a summary separator and the final score for both teams.
+print_final_score :-
+    score(team1, S1),
+    score(team2, S2),
+    format("~n=== Simulation complete ===~n", []),
+    format("Final score: team1=~w team2=~w~n", [S1, S2]).
