@@ -13,11 +13,9 @@
 % === Section 1. Static knowledge ===
 
 % Static course-knowledge facts — these never change during a simulation run.
-% Numbers chosen so that kick/catch events are visible on a 100x50 grid:
-%   kick_range(10) means a forward near the goal can shoot; catch_range(2) means
-%   a goalkeeper must be close to the ball to intercept it.
-% Stamina is large enough (4000) to survive at least 100 move steps at cost 10 each
-% before a player is forced to conserve energy.
+% Numbers tuned so that 10 rounds produce visible goals and kicks on a 100x50 grid:
+%   move_step(5) so players cover ground quickly; stamina_init(100) with costs 5/10
+%   so each player can make ~20 moves or ~10 kicks before tiring.
 
 % field(+Size) — describes the playing field dimensions as size(Width, Height)
 field(size(100, 50)).
@@ -35,16 +33,16 @@ kick_range(50).
 catch_range(2).
 
 % move_step(+S) — distance a player advances in one move action
-move_step(1).
+move_step(5).
 
 % stamina_init(+S) — starting stamina for every player at world setup
-stamina_init(4000).
+stamina_init(100).
 
 % stamina_cost_move(+C) — stamina deducted per move_step action
-stamina_cost_move(10).
+stamina_cost_move(5).
 
 % stamina_cost_kick(+C) — stamina deducted per kick action
-stamina_cost_kick(20).
+stamina_cost_kick(10).
 
 % === Section 2. Dynamic world model ===
 
@@ -397,7 +395,8 @@ applicable(collect(player(T, R)), _) :-
     player(T, R, Pos, _),
     ball(BPos),
     manhattan(Pos, BPos, D),
-    D =< 1.
+    move_step(S),
+    D =< S.
 
 % applicable(pass(Actor, Teammate), _) — actor has possession, teammate is on the
 %   same team with a different role, actor stamina >= cost_kick, and teammate is
@@ -568,12 +567,13 @@ act_goalkeeper(Team) :-
         ->  ball(BallPos),
             step_toward(player(Team, goalkeeper), BallPos)
         ;   S = hold_ball
-        ->  % Kick toward midfield as far as kick_range allows from current position.
+        ->  % Kick toward midfield as far as kick_range allows; vary y for realism.
             player(Team, goalkeeper, position(GkX, _GkY), _),
             kick_range(Kr),
+            random_between(15, 35, Cy),
             (   Team = team1
-            ->  KickX is min(100, GkX + Kr), KickTarget = position(KickX, 25)
-            ;   KickX is max(0,   GkX - Kr), KickTarget = position(KickX, 25)
+            ->  KickX is min(100, GkX + Kr), KickTarget = position(KickX, Cy)
+            ;   KickX is max(0,   GkX - Kr), KickTarget = position(KickX, Cy)
             ),
             do_action(kick(player(Team, goalkeeper), KickTarget))
         ;   true
@@ -600,7 +600,8 @@ act_defender(Team) :-
         ->  ball(BallPos),
             player(Team, defender, DPos, _),
             manhattan(DPos, BallPos, DD),
-            (   DD =< 1
+            move_step(MS),
+            (   DD =< MS
             ->  do_action(collect(player(Team, defender)))
             ;   step_toward(player(Team, defender), BallPos)
             )
@@ -635,15 +636,20 @@ act_forward(Team) :-
             ;   ball(BallPos),
                 player(Team, forward, FPos, _),
                 manhattan(FPos, BallPos, FD),
-                (   FD =< 1
+                move_step(MS),
+                (   FD =< MS
                 ->  do_action(collect(player(Team, forward)))
                 ;   step_toward(player(Team, forward), BallPos)
                 )
             )
         ;   S = shoot
-        ->  (Team = team1 -> GoalCenter = position(100, 25)
-                           ; GoalCenter = position(0, 25)),
-            do_action(kick(player(Team, forward), GoalCenter))
+        ->  random_between(20, 30, Gy),
+            (Team = team1 -> GoalCenter = position(100, Gy)
+                           ; GoalCenter = position(0, Gy)),
+            (   applicable(kick(player(Team, forward), GoalCenter), world)
+            ->  do_action(kick(player(Team, forward), GoalCenter))
+            ;   step_toward(player(Team, forward), GoalCenter)
+            )
         ;   true
         )
     )).
@@ -688,9 +694,12 @@ check_goal :-
             format("*** GOAL! ~w scored! Score is now ~w-~w ***~n",
                    [Attacker, NewS1, NewS2]),
             % Reposition players and ball; restore accumulated scores afterward.
+            % Conceding team (goal owner) restarts with possession from center.
             setup_world,
             retract(score(team1, _)), assertz(score(team1, NewS1)),
-            retract(score(team2, _)), assertz(score(team2, NewS2))
+            retract(score(team2, _)), assertz(score(team2, NewS2)),
+            retract(possession(_, _)),
+            assertz(possession(GoalOwner, forward))
         ;   true
         )
     )).

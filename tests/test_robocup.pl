@@ -109,23 +109,20 @@ test(csp_spacing_team2) :-
 
 % ---------------------------------------------------------------------------
 % Test 7: stamina_depletes_on_move
-%   One do_action(move_step(...)) deducts stamina_cost_move (10) from the
-%   acting player.  After a single step the forward's stamina should be 3990.
-%   Precondition: the forward must be able to step east — CSP places team1
-%   forward in X in [50,100], so stepping east from X=50 gives X=51 (in field).
+%   One do_action(move_step(...)) deducts stamina_cost_move from the acting
+%   player.  After a single step stamina should be stamina_init - cost_move.
+%   Uses parameter predicates so the test stays valid if values change.
 % ---------------------------------------------------------------------------
 test(stamina_depletes_on_move) :-
     setup_world,
-    % Ensure the forward can actually take a step east (applicable check).
-    % We move north to avoid hitting the X=100 boundary in case CSP chose X=100.
-    % Actually, CSP with labeling([]) picks minimum X=50 for team1 forward, so
-    % east is safe; but to be robust we retract and place the forward at a
-    % known inland position before the move.
+    stamina_init(Si),
+    stamina_cost_move(Cm),
     user:retractall(player(team1, forward, _, _)),
-    user:assertz(player(team1, forward, position(50, 25), 4000)),
+    user:assertz(player(team1, forward, position(50, 25), Si)),
     do_action(move_step(player(team1, forward), east)),
     user:player(team1, forward, _, S),
-    S =:= 3990.
+    Expected is Si - Cm,
+    S =:= Expected.
 
 % ---------------------------------------------------------------------------
 % Test 8: kick_fails_without_possession
@@ -227,19 +224,20 @@ test(fsm_initial_states) :-
     once(user:current_state(team2, forward,    advance)).
 
 % ---------------------------------------------------------------------------
-% Bonus: stamina_depletes_over_50_moves
-%   After 50 move_step applications on a player starting at 4000, stamina
-%   should be 3500 (50 * stamina_cost_move(10) = 500 deducted).
-%   This is scenario 2 from the Phase 6 backlog T6.1.
+% Bonus: stamina_depletes_over_10_moves
+%   Place the forward at (50,0) and move north 10 times (step=5, so Y goes
+%   0→50 — all within field bounds).  Stamina should be stamina_init - 10*cost.
+%   Uses parameter predicates so the test stays valid if values change.
 % ---------------------------------------------------------------------------
-test(stamina_depletes_over_50_moves) :-
+test(stamina_depletes_over_10_moves) :-
     setup_world,
-    % Place the team1 forward at a known position deep in their half so all
-    % 50 eastward moves land within the 100-wide field.
+    stamina_init(Si),
+    stamina_cost_move(Cm),
     user:retractall(player(team1, forward, _, _)),
-    user:assertz(player(team1, forward, position(50, 25), 4000)),
-    move_n(player(team1, forward), east, 50),
+    user:assertz(player(team1, forward, position(50, 0), Si)),
+    move_n(player(team1, forward), north, 10),
     user:player(team1, forward, _, S),
-    S =:= 3500.
+    Expected is Si - 10 * Cm,
+    S =:= Expected.
 
 :- end_tests(robocup).
