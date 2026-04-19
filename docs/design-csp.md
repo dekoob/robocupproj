@@ -62,7 +62,7 @@ Signatures touched: `player/4` (already declared dynamic in Section 2, shape `pl
 3. `place_team(team1)`, `place_team(team2)`.
 4. `assertz(score(team1, 0))`, `assertz(score(team2, 0))`.
 5. `assertz(possession(none, none))`.
-6. `assertz(turn(team1))` — initial seed only. T4.3 randomizes via `random_member/2` on the first `next_turn/0` call, so this seed value is not load-bearing.
+6. `assertz(first_mover(team1))` — initial seed only. `next_first_mover/0` randomizes via `random_member/2` each round, so this seed value is not load-bearing.
 
 Note: FSM initial states (`current_state/3`) are asserted by Section 4 bootstrap logic, not by `place_team/1`. `setup_world/0` may call a Section-4 helper after step 6 if T2.1 exposes one.
 

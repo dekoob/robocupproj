@@ -61,7 +61,7 @@ The test file (`tests/test_robocup.pl`) uses the PLUnit harness and covers:
 | `possession_starts_none` | `possession(none,none)` after setup |
 | `csp_spacing_team1` | team1 CSP positions are pairwise >= 15 apart (Manhattan) |
 | `csp_spacing_team2` | team2 CSP positions are pairwise >= 15 apart (Manhattan) |
-| `stamina_depletes_on_move` | One `move_step` deducts 10 stamina (4000 -> 3990) |
+| `stamina_depletes_on_move` | One `move_step` deducts `stamina_cost_move` (100 -> 95) |
 | `kick_fails_without_possession` | `kick` is a no-op when actor has no possession |
 | `forward_cannot_catch` | `catch` precondition rejects non-goalkeeper roles |
 | `goalkeeper_can_catch_when_ball_adjacent` | Goalkeeper catches ball within `catch_range(3)` |
@@ -70,7 +70,7 @@ The test file (`tests/test_robocup.pl`) uses the PLUnit harness and covers:
 | `check_goal_noop_at_midfield` | No goal at `(50,25)`; world unchanged |
 | `run_simulation_completes_small_N` | `run_simulation(2)` terminates cleanly |
 | `fsm_initial_states` | All 6 FSM slots start in the correct initial state |
-| `stamina_depletes_over_50_moves` | 50 moves deduct 500 stamina (4000 -> 3500) |
+| `stamina_depletes_over_10_moves` | 10 moves deduct 50 stamina (100 -> 50) |
 
 ---
 
@@ -83,7 +83,7 @@ The test file (`tests/test_robocup.pl`) uses the PLUnit harness and covers:
 | `do_action` | 1 | 5 | Check STRIPS preconditions via `applicable/2`; if ok, call `apply_effects/1` and log one line. |
 | `tick_fsm` | 2 | 4 | Read `current_state/3`; fire the first matching `transition/4`; update state. Args: `(Team, Role)`. |
 | `check_goal` | 0 | 7 | If ball is inside any goal rectangle, increment attacker score, print celebration, call `setup_world`. |
-| `print_summary` | 0 | 7 | Print final scoreboard and per-team kick/catch/goal metric counters. |
+| `print_summary` | 0 | 7 | Print final scoreboard and per-team metrics (shots, passes, saves, collects, tackles, goals). |
 
 ---
 
@@ -91,6 +91,6 @@ The test file (`tests/test_robocup.pl`) uses the PLUnit harness and covers:
 
 | File | Description |
 |---|---|
-| `robocup.pl` | Single 778-line source file; 8 sections: static facts (1), dynamic world (2), CSP formation (3), FSM machines (4), STRIPS actions (5), role behaviors (6), game rules/metrics (7), simulator loop (8). |
+| `robocup.pl` | Single ~845-line source file; 8 sections: static facts (1), dynamic world (2), CSP formation (3), FSM machines (4), STRIPS actions (5), role behaviors (6), game rules/metrics (7), simulator loop (8). |
 | `tests/test_robocup.pl` | PLUnit harness; 16 tests covering setup, CSP, FSM, STRIPS, stamina, goal detection, and simulation completion. |
 | `docs/` | Project context, report outline, viva answers, Floyd paper summaries. Read `docs/project-context.md` first. |

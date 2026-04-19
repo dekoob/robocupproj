@@ -53,7 +53,7 @@ Full diagram and rationale: see [plan/project-partition.md](../plan/project-part
 | Turn | `turn(Team)` | Sec 2 | `:- dynamic` |
 | FSM state | `current_state(Team, Role, State)` | Sec 4 | `:- dynamic` |
 | FSM transitions | `transition(Role, FromState, Condition, ToState)` | Sec 4 | static |
-| Metrics | `metric(kicks|catches|goals, Team, N)` | Sec 7 | `:- dynamic` |
+| Metrics | `metric(shots\|passes\|saves\|collects\|tackles_won\|tackles_lost\|goals, Team, N)` | Sec 7 | `:- dynamic` |
 
 `Team` is `team1` or `team2`. `Role` is `goalkeeper`, `defender`, or `forward`. Positions are integer pairs.
 
@@ -71,12 +71,12 @@ Cross-section surface. Do not change signatures without updating this file and n
 | `do_action/1` — `do_action(Action)` | `applicable` + `apply_effects` + one `format/2` log line. Sec 5. |
 | `act_goalkeeper/1`, `act_defender/1`, `act_forward/1` | Thin glue: FSM state → STRIPS action. Sec 6. |
 | `check_goal/0` | If ball inside a goal rect, increment attacker's score, reset via `setup_world`. Sec 7. |
-| `next_turn/0` | Pick next `turn/1` via `random_member([team1,team2], T)`; retract old fact, assert new one, log the pick. Sec 7. |
-| `simulate_round/0` | One round: next_turn → for each role on each team (in turn order) tick_fsm + act_role → check_goal → print_state → sleep. Sec 8. |
+| `next_first_mover/0` | Pick next `first_mover/1` via `random_member([team1,team2], T)`; retract old fact, assert new one, log the pick. Sec 7. |
+| `simulate_round/0` | One round: next_first_mover → for each role on each team (in turn order) tick_fsm + act_role → check_goal → print_state → sleep. Sec 8. |
 | `run_simulation/1` — `run_simulation(N)` | Entry point. `setup_world` once, then loop N rounds, print final score. Sec 8. |
 | `print_state/0`, `print_summary/0` | Console logging. Sec 8 / Sec 7. |
 
-Sensed helpers used by FSM conditions: `ball_close/2`, `in_kick_range/2`, `in_catch_range/2`, `ball_in_own_half/1`, `has_possession/2`, `can_shoot/1`, `can_pass/2`. Defined in Sec 4 alongside the FSM.
+Sensed helpers used by FSM conditions: `in_catch_range/2`, `ball_in_own_half/1`, `has_possession/2`, `ball_is_loose/1`, `can_shoot/2`. Defined in Sec 4 alongside the FSM.
 
 ## 7. File and section ownership
 

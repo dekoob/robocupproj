@@ -25,9 +25,9 @@
 
 ### 1.3 Scope of implementation
 - Two teams of three players: goalkeeper, defender, forward per team (team1, team2)
-- 100 x 50 discrete field; ball at position(X, Y); entry point run_simulation(N) — robocup.pl:767
+- 100 x 50 discrete field; ball at position(X, Y); entry point run_simulation(N) — robocup.pl:837
 - Three symbolic-AI layers: CSP for initial formation, FSM for intent selection, STRIPS for action execution
-- Single SWI-Prolog 9.x file (robocup.pl, 778 lines, 8 banner-delimited sections) plus 16 PLUnit tests at tests/test_robocup.pl
+- Single SWI-Prolog 9.x file (robocup.pl, ~845 lines, 8 banner-delimited sections) plus 16 PLUnit tests at tests/test_robocup.pl
 - Report structure mirrors the three-technique layering so viva rationale is self-evident
 
 ---
@@ -90,12 +90,12 @@
 > Source: docs/design-csp.md sections 3-4 and robocup.pl:69-86
 
 #### Constraints and labeling
-- Three pairwise Manhattan spacing constraints posted at robocup.pl:82-84
-- abs(Xgk - Xdf) + abs(Ygk - Ydf) #>= 15 — robocup.pl:82
-- abs(Xgk - Xfw) + abs(Ygk - Yfw) #>= 15 — robocup.pl:83
-- abs(Xdf - Xfw) + abs(Ydf - Yfw) #>= 15 — robocup.pl:84
-- Labeling: once(labeling([], [Xgk, Ygk, Xdf, Ydf, Xfw, Yfw])) — robocup.pl:86 — default heuristic; first valid solution; once/1 enforces determinism of setup_world/0
-- setup_world/0 calls place_team(team1) then place_team(team2) — robocup.pl:105-106
+- Three pairwise Manhattan spacing constraints posted at robocup.pl:84-86
+- abs(Xgk - Xdf) + abs(Ygk - Ydf) #>= 15 — robocup.pl:84
+- abs(Xgk - Xfw) + abs(Ygk - Yfw) #>= 15 — robocup.pl:85
+- abs(Xdf - Xfw) + abs(Ydf - Yfw) #>= 15 — robocup.pl:86
+- Labeling: once(labeling([], [Xgk, Ygk, Xdf, Ydf, Xfw, Yfw])) — robocup.pl:88 — default heuristic; first valid solution; once/1 enforces determinism of setup_world/0
+- setup_world/0 calls place_team(team1) then place_team(team2) — robocup.pl:108-109
 - PLUnit tests 5 and 6 verify pairwise spacing >= 15 for both teams — tests/test_robocup.pl:94-108
 
 ---
@@ -109,7 +109,7 @@
 - FSM produces intents; STRIPS executes them — clear separation; no overlap between layers
 
 #### States and initial conditions
-- Initial states seeded by init_fsm/0 — robocup.pl:274-281; called from setup_world/0 — robocup.pl:110
+- Initial states seeded by init_fsm/0 — robocup.pl:245-252; called from setup_world/0 — robocup.pl:113
 - FSM state stored in current_state(Team, Role, State) — robocup.pl:57
 
 | Role | States | Initial state |
@@ -118,7 +118,7 @@
 | defender | hold_line, intercept, pass_to_forward | hold_line |
 | forward | advance, chase_ball, shoot | advance |
 
-#### Transition table — nine static transition/4 facts at robocup.pl:225-235
+#### Transition table — nine static transition/4 facts at robocup.pl:191-206
 
 | Role | From | Condition(s) | To |
 |---|---|---|---|
@@ -132,12 +132,12 @@
 | forward | chase_ball | can_shoot | shoot |
 | forward | shoot | NOT has_possession | advance |
 
-> Source: docs/design-fsm.md section 5 and robocup.pl:225-235
+> Source: docs/design-fsm.md section 5 and robocup.pl:191-206
 
 #### Sensor helpers and tick mechanism
-- Seven side-effect-free sensor predicates — robocup.pl:125-196: ball_close/2, in_kick_range/2, in_catch_range/2, ball_in_own_half/1, has_possession/2, ball_is_loose/1, can_shoot/2, can_pass/2
+- Side-effect-free sensor predicates — robocup.pl:125-196: in_catch_range/2, ball_in_own_half/1, has_possession/2, ball_is_loose/1, can_shoot/2
 - Arity dispatch table at robocup.pl:243-244: ball_in_own_half and ball_is_loose are arity-1; all others arity-2
-- tick_fsm(Team, Role) — robocup.pl:291-298 — reads current_state/3, applies first matching transition via once/1, logs the change; silent no-op if no transition fires
+- tick_fsm(Team, Role) — robocup.pl:262-269 — reads current_state/3, applies first matching transition via once/1, logs the change; silent no-op if no transition fires
 - PLUnit test 15 confirms all 6 initial FSM states after setup_world — tests/test_robocup.pl:220-227
 
 ---
@@ -159,16 +159,17 @@
 
 | Action | Preconditions | Key effects |
 |---|---|---|
-| move_step(Actor, Dir) | at(Actor,Pos) (robocup.pl:366), stamina_ge(Actor,cost_move) (robocup.pl:368), in_field(NewPos) (robocup.pl:370-371) | del at(Actor,Pos), add at(Actor,NewPos); stamina -= 10; if carrier: ball moves with player (robocup.pl:417-419) |
-| kick(Actor, TargetPos) | has_ball(Actor) (robocup.pl:376), stamina_ge(Actor,cost_kick) (robocup.pl:378-379), in_field(TargetPos) (robocup.pl:380), in_range(Actor,TargetPos,kick_range) (robocup.pl:381) | del ball_at(_), add ball_at(TargetPos); possession -> (none,none) (robocup.pl:429-433); stamina -= 20; inc metric(kicks,T) |
-| catch(Actor) | Actor=player(_,goalkeeper) (robocup.pl:385), possession(none,none) (robocup.pl:386), in_range(Actor,BPos,catch_range) (robocup.pl:388) | ball snaps to goalkeeper pos (robocup.pl:437-443); possession -> (Team,goalkeeper); inc metric(catches,T) |
-| collect(Actor) | Actor=player(_,R) R\=goalkeeper (robocup.pl), possession(none,none), manhattan(ActorPos,BallPos,D) D=<1 | ball snaps to player pos; possession -> (Team,R); inc metric(catches,T) — enables defenders and forwards to secure a loose ball |
-| pass(Actor, Teammate) | has_ball(Actor) (robocup.pl:394), MR \= R (robocup.pl:395), in_range(Actor,TeammatePos,kick_range) (robocup.pl:399-400), stamina_ge(Actor,cost_kick) (robocup.pl:398) | ball moves to teammate pos (robocup.pl:452-456); possession -> (Team,TeammateRole); stamina -= 20; inc metric(kicks,T) |
+| move_step(Actor, Dir) | at(Actor,Pos) (robocup.pl:336), stamina_ge(Actor,cost_move) (robocup.pl:338), in_field(NewPos) (robocup.pl:341-342) | del at(Actor,Pos), add at(Actor,NewPos); stamina -= 5; if carrier: ball moves with player |
+| kick(Actor, TargetPos) | has_ball(Actor) (robocup.pl:346), stamina_ge(Actor,cost_kick) (robocup.pl:348-350), in_field(TargetPos) (robocup.pl:351), in_range(Actor,TargetPos,kick_range) (robocup.pl:352) | del ball_at(_), add ball_at(TargetPos); possession -> (none,none); stamina -= 10; inc metric(shots,T) |
+| catch(Actor) | Actor=player(_,goalkeeper) (robocup.pl:356), possession(none,none) (robocup.pl:357), in_range(Actor,BPos,catch_range) (robocup.pl:359) | ball snaps to goalkeeper pos; possession -> (Team,goalkeeper); inc metric(saves,T) |
+| collect(Actor) | Actor=player(_,R) R\=goalkeeper (robocup.pl:363), possession(none,none) (robocup.pl:365), manhattan(ActorPos,BallPos,D) D =< move_step(5) (robocup.pl:368-370) | ball snaps to player pos; possession -> (Team,R); inc metric(collects,T) — field player secures loose ball |
+| tackle(Tackler, Opponent) | Opponent has possession (robocup.pl:377), different teams (robocup.pl:376), manhattan(Tackler,Opponent) ≤ move_step(5) (robocup.pl:380-382) | 50% random roll (tackle_success_rate=50, robocup.pl:48): success → tackler gains possession + ball (robocup.pl:471-475), inc metric(tackles_won,T); failure → inc metric(tackles_lost,T) only (robocup.pl:476) |
+| pass(Actor, Teammate) | has_ball(Actor) (robocup.pl:387), same team, different role (robocup.pl:389), in_range(Actor,TeammatePos,kick_range) (robocup.pl:394), stamina_ge(Actor,cost_kick) (robocup.pl:392) | ball moves to teammate pos (robocup.pl:481-491); possession -> (Team,TeammateRole); stamina -= 10; inc metric(passes,T) |
 
 > Source: docs/design-strips.md section 4 and robocup.pl:300-471
 
 #### do_action wrapper and PLUnit verification
-- do_action(Action) — robocup.pl:466-471 — safe wrapper: applicable check then apply_effects plus one format/2 log line; always succeeds so role behaviors never crash on inapplicable actions
+- do_action(Action) — robocup.pl:500-505 — safe wrapper: applicable check then apply_effects plus one format/2 log line; always succeeds so role behaviors never crash on inapplicable actions
 - PLUnit test 8: kick is a no-op without possession — tests/test_robocup.pl:136-140
 - PLUnit test 9: forward cannot catch (role mismatch blocks applicable/2) — tests/test_robocup.pl:147-150
 - PLUnit test 10: goalkeeper can catch when adjacent — tests/test_robocup.pl:158-166
@@ -179,17 +180,18 @@
 > Budget: ~1/2 page (~130 words of prose when expanded)
 
 ### 4.1 Metrics infrastructure
-- metric(Key, Team, N) — robocup.pl:58 — dynamic counter; three keys: kicks, catches, goals
-- inc_metric(Key, Team) — robocup.pl:671-676 — atomic increment with retract/assertz; no race conditions (single-threaded)
-- print_summary/0 — robocup.pl:688-701 — final scoreboard plus per-team kick/catch/goal counts after run_simulation/1 completes
+- metric(Key, Team, N) — robocup.pl:58 — dynamic counter; seven keys: shots, passes, saves, collects, tackles_won, tackles_lost, goals
+- inc_metric(Key, Team) — robocup.pl:739-744 — atomic increment with retract/assertz; no race conditions (single-threaded)
+- print_summary/0 — robocup.pl:755 — final scoreboard plus per-team metric counts after run_simulation/1 completes; metrics reset once at match start via retractall in run_simulation/1 (not in setup_world/0, so they accumulate across goal resets)
 
 ### 4.2 Sample run output structure
-- Per-round output from simulate_round/0 — robocup.pl:738-752:
-  - "-- turn: team --" from next_turn/0 — robocup.pl:659
-  - "Team Role: FromState -> ToState" from tick_fsm/2 — robocup.pl:296
-  - "  do_action: action" from do_action/1 — robocup.pl:469
-  - "[state] ball=... turn=... possession=... score=..." plus 6 player lines from print_state/0 — robocup.pl:718-733
-  - "*** GOAL! Team scored! Score is now N-M ***" from check_goal/0 — robocup.pl:643
+- Per-round output from simulate_round/0 — robocup.pl:807-824:
+  - "-- first_mover: team --" from next_first_mover/0 — robocup.pl:726
+  - "Team Role: FromState -> ToState" from tick_fsm/2 — robocup.pl:267
+  - "  do_action: action" from do_action/1 — robocup.pl:503
+  - "[state] ball=... first_mover=... possession=... score=..." plus 6 player lines from print_state/0 — robocup.pl:790
+  - "*** GOAL! Team scored! Score is now N-M ***" from check_goal/0 — robocup.pl:702
+- Sample match summary (10-round run): `team1: shots=1 passes=2 saves=1 collects=0 tackles=0/0 goals=0`
 
 ### 4.3 PLUnit test coverage summary — all 16 tests pass
 
@@ -201,7 +203,7 @@
 | possession_starts_none | possession(none,none) after setup | tests/test_robocup.pl:83-86 |
 | csp_spacing_team1 | CSP pairwise spacing >= 15 for team1 | tests/test_robocup.pl:94-98 |
 | csp_spacing_team2 | CSP pairwise spacing >= 15 for team2 | tests/test_robocup.pl:104-108 |
-| stamina_depletes_on_move | single move deducts 10 stamina | tests/test_robocup.pl:117-128 |
+| stamina_depletes_on_move | single move deducts 5 stamina (stamina_cost_move=5) | tests/test_robocup.pl:117-128 |
 | kick_fails_without_possession | STRIPS precondition blocks illegal kick | tests/test_robocup.pl:136-140 |
 | forward_cannot_catch | role mismatch blocks catch applicable/2 | tests/test_robocup.pl:147-150 |
 | goalkeeper_can_catch_when_ball_adjacent | catch succeeds within catch_range | tests/test_robocup.pl:158-166 |
@@ -210,7 +212,7 @@
 | check_goal_noop_at_midfield | ball at (50,25) changes nothing | tests/test_robocup.pl:199-204 |
 | run_simulation_completes_small_N | run_simulation(2) terminates cleanly | tests/test_robocup.pl:211-213 |
 | fsm_initial_states | all 6 initial current_state/3 facts correct | tests/test_robocup.pl:220-227 |
-| stamina_depletes_over_50_moves | 50 moves deduct 500 stamina total | tests/test_robocup.pl:235-243 |
+| stamina_depletes_over_10_moves | 10 moves deduct 50 stamina (100 → 50) | tests/test_robocup.pl:226-235 |
 
 ### 4.4 Strengths
 - Symbolic legibility: every game event traces to a named FSM state or STRIPS precondition — no hidden side effects
@@ -218,7 +220,7 @@
 - Three rubric-named techniques present and independently inspectable in separate code sections
 
 ### 4.5 Weaknesses
-- Turn order is randomised (random_member/2 — robocup.pl:659): full-match outcome is non-deterministic between runs without seed pinning
+- Turn order is randomised (random_member/2 — robocup.pl:727): full-match outcome is non-deterministic between runs without seed pinning
 - Sensor helpers use Manhattan distance throughout: overestimates effective range on diagonals vs Euclidean — may cause occasional missed interceptions near corners
 
 ---
@@ -227,12 +229,12 @@
 > Budget: ~1/2 page (~130 words of prose when expanded)
 
 ### 5.1 Noisy sensing
-- All sensor helpers (ball_close/2, in_catch_range/2, etc.) read ball/1 and player/4 perfectly — no noise model
+- All sensor helpers (in_catch_range/2, ball_in_own_half/1, can_shoot/2, etc.) read ball/1 and player/4 perfectly — no noise model
 - Real RoboCup server delivers noisy partial observations via see messages with distance/angle estimates
 - Future: add sensor-noise predicate that perturbs readings by configurable epsilon; FSM transitions would then require probabilistic guards or a belief-state layer
 
 ### 5.2 Fixed team size — three players per team
-- Role set [goalkeeper, defender, forward] is hardcoded as atoms in transition/4 facts — robocup.pl:225-235
+- Role set [goalkeeper, defender, forward] is hardcoded as atoms in transition/4 facts — robocup.pl:191-206
 - Scaling to 11-a-side requires a richer role taxonomy, multi-player coordination in STRIPS, and a CSP with 11 * 6 = 66 variables per team
 - Future: parameterise team size; switch to labeling([ff], Vars) (first-fail heuristic) for larger variable sets; docs/design-csp.md section 5 already notes this option
 
@@ -246,9 +248,35 @@
 - Future: trigger partial CSP re-solve when player positions violate zone bounds by more than a threshold — would require detecting zone violations via sensor predicates already in Section 4
 
 ### 5.5 No learning or adaptation
-- Role policies are fixed static transition/4 facts — robocup.pl:225-235; they do not update from match experience
+- Role policies are fixed static transition/4 facts; they do not update from match experience
 - Deliberately excluded: machine learning and CBR are out of scope — docs/project-context.md section 3
 - Future: encode role strategies as weighted preference lists adjusted by reinforcement signal (goals scored or conceded); hybrid symbolic-subsymbolic architecture with FSM/STRIPS as symbolic baseline
+
+### 5.6 Stamina exhaustion freezes play
+- When all players reach stamina=0, no action passes the applicable/2 stamina check; the simulation advances rounds but no moves execute — the world freezes until N rounds complete
+- Root cause: stamina restores only on setup_world/0 (goal reset); within a match it only decreases
+- Observed in 30-round simulations: around round 20 exhausted players hold possession indefinitely since opponents also lack stamina to tackle
+- Future: add a stamina-regen rule (e.g. +2 per idle round) so matches remain active regardless of length
+
+### 5.7 Loose-ball recovery near goal area
+- After a shot lands close to the goal (e.g. position(98,22)), the ball stays loose for many rounds: the goalkeeper overshoots by following the goal-center target rather than the ball, and field players in `intercept` state only pick up via collect/1 which requires manhattan distance <= move_step(5)
+- In the 30-round test run the ball sat at (98,22) uncollected for 8 consecutive rounds while all three team2 players circled it
+- Future: add a second chase target in act_goalkeeper when in chase_ball state — try catch first, then step directly onto the ball position if within gk_zone_depth
+
+### 5.8 Loose-ball collects are rare in practice
+- The `collect` action (field player picks up a loose ball) fires only when a shot falls short of the goal area and a field player steps within manhattan distance = move_step(5) of the ball
+- In most simulations shots reach the goal area where the goalkeeper's catch_range(3) fires first, leaving no loose ball for field players to collect; so collects=0 or collects=1 in match summaries is normal
+- This is expected behaviour: the collect path exists for correctness and appears when a shot misses the goal area entirely and bounces into field territory
+
+### 5.9 Goals require enough simulation rounds to develop
+- In a 10-round run the simulation frequently ends 0-0: players spend early rounds advancing and passing before a forward can line up a shot within kick_range of the goal
+- Stamina constants (init=100, cost_move=5, cost_kick=10) allow ~20 moves or ~10 kicks per player; goals reliably appear at 15+ rounds once enough ball movement has accumulated
+- This is a calibration tradeoff, not a logic error — the 16 PLUnit tests confirm goal detection is correct (ball at goal position → score increment)
+
+### 5.10 team1 always takes the opening kickoff
+- do_kickoff/3 is hardcoded to team1 at match start (run_simulation/1 — robocup.pl:841); after a goal the conceding team kicks off (check_goal/0 — robocup.pl:715)
+- No coin-toss or alternating opening kickoff is implemented; team1 consistently gains the first possession at match start
+- Future: randomly select the opening kickoff team using random_member/2 (already used by next_first_mover/0) for symmetry
 
 ---
 

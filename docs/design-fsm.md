@@ -36,13 +36,11 @@ All helpers are side-effect-free queries on `player/4`, `ball/1`, `possession/2`
 
 | Predicate | Arity | Semantics |
 |---|---|---|
-| `ball_close(+Team, +Role)` | 2 | Manhattan distance from player's `position/2` to `ball/1` position ≤ `kick_range(K) + 5`. Buffer beyond kick range triggers chase before the ball is actually kickable. |
-| `in_kick_range(+Team, +Role)` | 2 | Manhattan distance from player to ball ≤ `kick_range(K)`. |
 | `in_catch_range(+Team, +Role)` | 2 | Manhattan distance from player to ball ≤ `catch_range(C)`. |
 | `ball_in_own_half(+Team)` | 1 | Uses ball X only. team1 owns `X in [0,50]`, team2 owns `X in [50,100]`. |
 | `has_possession(+Team, +Role)` | 2 | Matches the current `possession(Team, Role)` fact. Fails when loose (`possession(none,none)`). |
+| `ball_is_loose(+Team)` | 1 | Succeeds when `possession(none, none)`. Team arg ignored. |
 | `can_shoot(+Team, +Role)` | 2 | `has_possession(Team, Role)` **and** Manhattan distance from player to opponent goal centre ≤ `kick_range(K)`. Opponent goal centres: team1 attacks (100,25); team2 attacks (0,25). |
-| `can_pass(+Team, +Role)` | 2 | `has_possession(Team, Role)` **and** a teammate exists (different Role, same Team) within `kick_range(K)` Manhattan distance. |
 
 ## 5. Transition table (report figure)
 

@@ -1,12 +1,6 @@
-% =============================================================================
-% File    : tests/test_robocup.pl
-% Purpose : PLUnit test harness for robocup.pl — covers world initialisation,
-%           CSP spacing, FSM initial states, STRIPS preconditions/effects,
-%           stamina depletion, goal detection, and simulation entry point.
-% Run     : swipl -s tests/test_robocup.pl -g "run_tests, halt" 2>&1
-%        OR via the project verification command:
-%           swipl -s robocup.pl -g "consult('tests/test_robocup.pl'), run_tests, halt"
-% =============================================================================
+% tests/test_robocup.pl — PLUnit test harness for robocup.pl
+% Run: swipl -s tests/test_robocup.pl -g "run_tests, halt" 2>&1
+%   OR: swipl -s robocup.pl -g "consult('tests/test_robocup.pl'), run_tests, halt"
 
 :- use_module(library(plunit)).
 

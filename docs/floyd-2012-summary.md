@@ -54,7 +54,7 @@
 
 ## Useful Ideas Borrowed for Our Symbolic Design
 
-- **Tracker-style ball proximity sensing** → our `ball_close/2` and `in_kick_range/2` sensor helpers abstract this into Boolean conditions for FSM transitions.
+- **Tracker-style ball proximity sensing** → our `in_catch_range/2` sensor helper abstracts this into a Boolean condition for FSM transitions.
 - **Formation zones per role** → CSP constraints in `place_team/1`: goalkeeper zone near own goal, defender in own half, forward near opposing half.
 - **Defender intercept role** → `intercept` FSM state: defender moves toward a computed intercept point on the ball-to-goal line.
 - **Pass-to-forward as a named action** → STRIPS `pass(Actor, Teammate)` with precondition `possession(Team, defender)` and effect `possession(Team, forward)`.

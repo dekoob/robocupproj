@@ -370,12 +370,10 @@ Prefer these choices unless there is a strong reason not to:
 - Discrete coordinates instead of continuous physics.
 - Alternating turn order instead of random turn order, unless randomness is explicitly easier and still easy to explain.
 - Symbolic helper predicates such as:
-  ball_close/2
-  in_kick_range/2
   in_catch_range/2
   ball_in_own_half/1
-  can_shoot/1
-  can_pass/2
+  ball_is_loose/1
+  can_shoot/2
 - Small dynamic predicate set with clear naming.
 - Explicit role-based rules rather than deep generic abstractions.
 - Simple console logging with format/2.

@@ -37,7 +37,7 @@
 - CSP for initial formation (tiny, `clpfd`-based, one-shot)
 - STRIPS-style action schema (preconditions + effects; no planner)
 - PLUnit test harness with ≥4 scripted scenarios
-- Metrics counters (goals, kicks, catches) + `print_summary/0`
+- Metrics counters (goals, shots, passes, saves, collects, tackles_won, tackles_lost) + `print_summary/0`
 - Scripted opening that guarantees ≥1 goal in `run_simulation(10)`
 - `docs/project-context.md` as shared-context source-of-truth
 - `docs/viva_answers.md` pre-drafted Q&A bank
@@ -194,7 +194,7 @@ Tasks are self-contained (each includes the file path, what-to-change, and accep
 **T1.1 — Static facts + sensor helpers (Section 1)** ⇢ sequential (blocks CSP)
 - File: `robocup.pl`, Section 1.
 - Content: `field(size(100,50))`, `goal_position(team1, rect(0,20,0,30))`, `goal_position(team2, rect(100,20,100,30))`, `kick_range(50)`, `catch_range(3)`, `move_step(5)`, `stamina_init(100)`, `stamina_cost_move(5)`, `stamina_cost_kick(10)`.
-- Sensor helpers (also Section 1): `ball_close/2`, `in_kick_range/2`, `in_catch_range/2`, `ball_in_own_half/1`, `has_possession/2`, `can_shoot/1`, `can_pass/2`. These read `player/4`, `ball/1`, `possession/2` — no mutation.
+- Sensor helpers (also Section 1): `in_catch_range/2`, `ball_in_own_half/1`, `has_possession/2`, `ball_is_loose/1`, `can_shoot/2`. These read `player/4`, `ball/1`, `possession/2` — no mutation.
 - Acceptance: `?- field(F), kick_range(K).` returns bindings. `?- has_possession/2` defined even if nothing currently holds possession.
 
 **T1.2 — CSP initial formation (Section 3)** ⇢ after T1.1
@@ -220,7 +220,7 @@ Tasks are self-contained (each includes the file path, what-to-change, and accep
   - Defender: `hold_line`, `intercept`, `pass_to_forward`
   - Forward: `advance`, `chase_ball`, `shoot`
 - Predicates: `current_state/3` (already declared in T0.2), `transition(Role, FromState, Condition, ToState)` (static facts), `tick_fsm(Team,Role)` which reads world via Section 1 sensors and applies one transition.
-- Conditions use ONLY sensor predicates defined in T1.1 (`has_possession/2`, `ball_in_own_half/1`, `ball_close/2`, etc.) — no direct reads of `player/4` / `ball/1` here.
+- Conditions use ONLY sensor predicates defined in T1.1 (`has_possession/2`, `ball_in_own_half/1`, `ball_is_loose/1`, etc.) — no direct reads of `player/4` / `ball/1` here.
 - Acceptance: `?- tick_fsm(team1, forward).` progresses state given a scripted world; `listing(transition/4)` shows a readable table. Report-ready: one transition table per role.
 
 **T2.2 — STRIPS action schema (Section 5)** ‖ parallel with T2.1
@@ -260,8 +260,8 @@ Shared acceptance: each predicate is `nondet`-free, logs one `format/2` line per
 - Acceptance: scripted test where ball is asserted at (0,25) → team2's score increments.
 
 **T4.3 — Alternating turn order** ‖ parallel
-- File: Section 7. Predicate: `next_turn/0` — strict alternation. If `turn(team1)` → retract, assert `turn(team2)`. (Randomized version deferred — see D4.)
-- Acceptance: `next_turn` toggles and prints.
+- File: Section 7. Predicate: `next_first_mover/0` — randomised pick. Retract old `first_mover/1`, assert new one, log the pick. (Strict alternation considered; random_member/2 is simpler and still fair over many rounds.)
+- Acceptance: `next_first_mover` picks a team and prints.
 
 **T4.4 — Pauses between rounds** ‖ parallel
 - File: Section 8. Insert `sleep(0.3)` at end of `simulate_round/0` for readability.
@@ -270,11 +270,11 @@ Shared acceptance: each predicate is `nondet`-free, logs one `format/2` line per
 ### Phase 5 — Simulator glue (after Phase 4, ~1 hour)
 
 **T5.1 — `simulate_round/0`** ⇢
-- Body: `next_turn`, for each role on both teams (in turn order): `tick_fsm` then `act_<role>`; then `check_goal`, then `print_state`, then `sleep`.
+- Body: `next_first_mover`, for each role on both teams (in turn order): `tick_fsm` then `act_<role>`; then `check_goal`, then `print_state`, then `sleep`.
 - Acceptance: one call prints exactly one round's events in order.
 
 **T5.2 — `run_simulation(N)`** ⇢ after T5.1
-- Recursive: `run_simulation(0) :- print_final_score.` and `run_simulation(N) :- N>0, simulate_round, N1 is N-1, run_simulation(N1).`
+- Recursive: `run_simulation(0) :- print_summary.` and `run_simulation(N) :- N>0, simulate_round, N1 is N-1, run_simulation(N1).`
 - Must include `setup_world` on first call (use `run_simulation(N) :- setup_world, loop(N).` pattern so nested calls don't reset).
 - Acceptance: `?- run_simulation(10).` runs to completion, prints final score.
 
@@ -292,8 +292,8 @@ Shared acceptance: each predicate is `nondet`-free, logs one `format/2` line per
 
 **T6.2 — Metrics logging** ‖ parallel with T6.1
 - File: Section 7 of `robocup.pl`. Use `metric/3` already declared in T0.2. Increment in respective effect predicates.
-- End-of-game `print_summary/0` prints a scoreboard + metrics (goals, kicks, catches).
-- Acceptance: after `run_simulation(20)`, summary shows non-zero kicks and the goals that happened.
+- End-of-game `print_summary/0` prints a scoreboard + metrics (goals, shots, passes, saves, collects, tackles_won, tackles_lost).
+- Acceptance: after `run_simulation(20)`, summary shows non-zero shots/passes and the goals that happened.
 
 ### Phase 7 — Documentation (after Phase 6, ~2.5 hours)
 
